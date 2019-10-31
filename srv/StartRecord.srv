@@ -1,0 +1,6 @@
+int32 num_frames
+int32 frames_skip
+int32 ms_skip
+string path
+---
+string status

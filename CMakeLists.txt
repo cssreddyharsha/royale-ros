@@ -4,8 +4,6 @@ project(argus_ros)
 set(ARGUS_ROOT "/opt/argus" CACHE STRING "Root directory to argus SDK")
 set(argus_DIR "/opt/argus/share")
 
-add_compile_options(-Wno-conversion -Werror -Wall -Wextra -std=c++14)
-
 find_package(argus REQUIRED
   PATHS ${argus_ROOT}/share
   )
@@ -19,7 +17,6 @@ MESSAGE(STATUS "argus_LIBS: " ${argus_LIBS})
 find_package(Boost REQUIRED)
 
 find_package(catkin REQUIRED COMPONENTS
-  bnr_testing_support
   cv_bridge
   image_transport
   message_generation
@@ -73,6 +70,9 @@ catkin_package(
 #############
 ##  Build  ##
 #############
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-conversion -std=c++14")
+
 #catkin_lint: ignore_once external_directory
 include_directories(
   include
@@ -144,7 +144,3 @@ install(DIRECTORY doc
 ######################
 ## Node-level tests ##
 ######################
-
-if(CATKIN_ENABLE_TESTING)
-  enable_bnr_tests()
-endif()

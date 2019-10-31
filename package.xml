@@ -9,7 +9,6 @@
   <author email="tom@loveparkrobotics.com">Tom Panzarella</author>
 
   <buildtool_depend>catkin</buildtool_depend>
-  <build_depend>bnr_testing_support</build_depend>
   <build_depend>roslint</build_depend>
 
   <depend>nodelet</depend>

@@ -44,7 +44,7 @@
 #include <argus_ros/StartRecord.h>
 #include <argus_ros/StopRecord.h>
 #include <ros/package.h>
-#include <json.hpp>
+#include <argus_ros/contrib/json.hpp>
 
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>

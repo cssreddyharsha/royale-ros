@@ -15,23 +15,25 @@
  */
 
 #include <algorithm>
+#include <argus.hpp>
+#include <argus_ros/contrib/json.hpp>
 #include <iostream>
 #include <string>
-#include <royale.hpp>
-#include <royale_ros/contrib/json.hpp>
 
 using json = nlohmann::json;
 
-int main(int argc, const char **argv)
-{
+#define UNUSED(var) (void)(var)
+
+int main(int argc, const char** argv) {
+  UNUSED(argc);
+  UNUSED(argv);
   json retval = json::parse("[]");
 
-  royale::CameraManager manager;
+  argus::CameraManager manager;
   auto camlist = manager.getConnectedCameraList();
   std::transform(camlist.begin(), camlist.end(),
                  std::back_inserter(retval),
-                 [](royale::String& s) ->std::string
-                 { return std::string(s.c_str()); });
+                 [](std::string& s) -> std::string { return std::string(s.c_str()); });
 
   std::cout << retval.dump(2) << std::endl;
 }

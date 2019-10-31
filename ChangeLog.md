@@ -1,3 +1,14 @@
+## Changes between royale-ros 0.2.0 and argus-ros 0.0.0 (Changes made for BNR)
+* Change of namespace from royale-ros to argus-ros
+* Modify startup parameters to have auto-exposure and configs on startup
+* Add services to save rrf files
+* Add capability to publish unit vectors
+* Add occlusion filter
+* Add operating status changes
+* Add event listener(mostly temperature event)
+* Qualified against Argus v1.3.0
+* Qualified the goblin as supported hardware
+
 ## Changes between royale-ros 0.1.0 and 0.2.0
 
 * Qualified against Royale v3.16.0.51

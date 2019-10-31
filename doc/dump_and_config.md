@@ -1,8 +1,8 @@
-royale-ros: Inspecting and configuring the camera/imager settings
+argus-ros: Inspecting and configuring the camera/imager settings
 =================================================================
 
-`royale-ros` provides access to the camera/imager parameters via the `Dump` and
-`Config` services on the camera nodelet. The approach employed by `royale-ros`
+`argus-ros` provides access to the camera/imager parameters via the `Dump` and
+`Config` services on the camera nodelet. The approach employed by `argus-ros`
 is to encode the settings via a JSON serialization. To inpsect the settings you
 use the `Dump` service to get a JSON encoding of the parameters. To mutate the
 settings you use the `Config` service by providing a JSON serialization of your
@@ -10,7 +10,7 @@ settings you use the `Config` service by providing a JSON serialization of your
 
 **NOTE:** In some of the examples that follow, we use the
   [jq](https://stedolan.github.io/jq/) command line tool to process the
-  `royale-ros` JSON stream via a Linux pipeline. If you are on Ubuntu, you can
+  `argus-ros` JSON stream via a Linux pipeline. If you are on Ubuntu, you can
   get `jq` via `sudo apt-get install jq`.
 
 ## The Dump service
@@ -68,7 +68,7 @@ pipeline. To that end, we provide a convenience tool to be used as part of a
 pipeline. To produce the same output but while emitting valid JSON you can:
 
 ```
-$ rosrun royale_ros dump
+$ rosrun argus_ros argus_ros_dump
 {
   "Device": {
     "Id": "0005-4804-0050-1916",
@@ -120,7 +120,7 @@ of robots or fleets of cameras on a single robot or fleets of cameras
 distributed over a fleet of robots -- you get the point).
 
 ```
-$ rosrun royale_ros dump | jq .Imager.UseCases
+$ rosrun argus_ros argus_ros_dump | jq .Imager.UseCases
 [
   "MODE_9_5FPS_2000",
   "MODE_9_10FPS_1000",
@@ -222,7 +222,7 @@ case on the camera. Let's baseline the camera's current state by inspecting the
 dump:
 
 ```
-$ rosrun royale_ros dump
+$ rosrun argus_ros argus_ros_dump
 {
   "Device": {
     "Id": "0005-4804-0050-1916",
@@ -267,14 +267,14 @@ As a first step to changing the use case, let's first discover the current use
 case that is active on the camera:
 
 ```
-$ rosrun royale_ros dump | jq .Imager.CurrentUseCase.Name
+$ rosrun argus_ros argus_ros_dump | jq .Imager.CurrentUseCase.Name
 "MODE_9_5FPS_2000"
 ```
 
 Next, let's see what valid use cases we can set on the camera
 
 ```
-$ rosrun royale_ros dump | jq .Imager.UseCases
+$ rosrun argus_ros argus_ros_dump | jq .Imager.UseCases
 [
   "MODE_9_5FPS_2000",
   "MODE_9_10FPS_1000",
@@ -290,7 +290,7 @@ $ rosrun royale_ros dump | jq .Imager.UseCases
 For fun, let's apply one of the mixed mode uses cases to the camera:
 
 ```
-$ echo '{"Imager":{"CurrentUseCase":{"Name":"MODE_MIXED_30_5"}}}' | rosrun royale_ros config
+$ echo '{"Imager":{"CurrentUseCase":{"Name":"MODE_MIXED_30_5"}}}' | rosrun argus_ros argus_ros_config
 [ INFO] [1503078647.907152832]: status=0
 [ INFO] [1503078647.907353149]: msg=OK
 ```
@@ -301,7 +301,7 @@ new use case on the camera.
 We now check to see that our camera setting did in fact get set on the camera:
 
 ```
-$ rosrun royale_ros dump | jq .Imager.CurrentUseCase.Name
+$ rosrun argus_ros argus_ros_dump | jq .Imager.CurrentUseCase.Name
 "MODE_MIXED_30_5"
 ```
 

@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
-#include <royale_ros/camera_nodelet.h>
-#include <royale_ros/contrib/json.hpp>
+#include <argus_ros/camera_nodelet.h>
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <limits>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -30,41 +31,47 @@
 #include <utility>
 #include <vector>
 
-#include <boost/algorithm/string.hpp>
+#include <argus_ros/Config.h>
+#include <argus_ros/Dump.h>
+#include <argus_ros/ExposureTimes.h>
+#include <argus_ros/SetExposureTime.h>
+#include <argus_ros/SetExposureTimes.h>
+#include <argus_ros/Start.h>
+#include <argus_ros/Stop.h>
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <nodelet/nodelet.h>
-#include <opencv2/opencv.hpp>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl_ros/point_cloud.h>
 #include <pluginlib/class_list_macros.h>
 #include <ros/ros.h>
-#include <royale_ros/ExposureTimes.h>
-#include <royale_ros/SetExposureTime.h>
-#include <royale_ros/SetExposureTimes.h>
-#include <royale_ros/Config.h>
-#include <royale_ros/Dump.h>
-#include <royale_ros/Start.h>
-#include <royale_ros/Stop.h>
-#include <royale.hpp>
 #include <sensor_msgs/CameraInfo.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/image_encodings.h>
+#include <argus.hpp>
+#include <boost/algorithm/string.hpp>
+#include <opencv2/opencv.hpp>
 
 namespace enc = sensor_msgs::image_encodings;
-using json = nlohmann::json;
-constexpr auto OK_ = royale::CameraStatus::SUCCESS;
+constexpr auto OK_ = argus::CameraStatus::SUCCESS;
+
+//-------------- BNR -----------/
+#define UNUSED(var) (void)(var)
+const float DEPTH_THRESH = 0.1f;
+typedef argus_ros::StartRecord::Request StartRecReq;
+typedef argus_ros::StartRecord::Response StartRecResp;
+typedef argus_ros::StopRecord::Request StopRecReq;
+typedef argus_ros::StopRecord::Response StopRecResp;
+//------------------------------/
 
 //================================================
 // Nodelet implementation
 //================================================
 
-void
-royale_ros::CameraNodelet::onInit()
-{
+void argus_ros::CameraNodelet::onInit() {
   NODELET_INFO_STREAM("onInit(): " << this->getName());
 
-  // Royale SDK access level
+  // argus SDK access level
   this->access_level_ = 0;
 
   // flag indicating that we have not yet created our image publishers
@@ -87,45 +94,77 @@ royale_ros::CameraNodelet::onInit()
   this->np_.param<std::string>("initial_use_case", this->initial_use_case_,
                                "-");
 
+  //-------------- BNR -----------/
+  this->np_.param<float>("status_secs", stat_secs_, 5.0);
+  this->np_.param<std::string>("initial_configuration", this->config_file_, "-");
+  if (this->config_file_ != "-")
+    this->config_populated_ = true;
+  this->np_.param<std::string>("image_mask", image_mask_loc_, "-");
+
+  //--------------------
+  // Load the image mask
+  //--------------------
+  if (image_mask_loc_ != "-") {
+    if (!this->ParseMaskFile()) {
+      NODELET_WARN_STREAM("Unable to load image mask at <" << image_mask_loc_ << ">");
+      image_mask_loaded_ = false;
+    } else {
+      NODELET_INFO_STREAM("Loaded image mask from <" << image_mask_loc_ << ">");
+      image_mask_loaded_ = true;
+    }
+  } else {
+    image_mask_loaded_ = false;
+  }
+  //------------------------------/
+
   //------------------------------------------------------------
   // Instantiate the underlying camera device by polling the bus
   //------------------------------------------------------------
   this->timer_ =
-    this->np_.createTimer(ros::Duration(.001),
-                          [this](const ros::TimerEvent& t)
-                          { this->InitCamera(); },
-                          true); // oneshot timer
+      this->np_.createTimer(ros::Duration(.001),
+                            [this](const ros::TimerEvent& t) { UNUSED(t); this->InitCamera(); },
+                            true);  // oneshot timer
 
   //---------------------
   // Advertised Services
   //---------------------
   this->dump_srv_ =
-    this->np_.advertiseService<royale_ros::Dump::Request,
-                               royale_ros::Dump::Response>
-    ("Dump", std::bind(&CameraNodelet::Dump, this,
-                              std::placeholders::_1,
-                              std::placeholders::_2));
+      this->np_.advertiseService<argus_ros::Dump::Request,
+                                 argus_ros::Dump::Response>("Dump", std::bind(&CameraNodelet::Dump, this,
+                                                                              std::placeholders::_1,
+                                                                              std::placeholders::_2));
 
   this->config_srv_ =
-    this->np_.advertiseService<royale_ros::Config::Request,
-                               royale_ros::Config::Response>
-    ("Config", std::bind(&CameraNodelet::Config, this,
-                         std::placeholders::_1,
-                         std::placeholders::_2));
+      this->np_.advertiseService<argus_ros::Config::Request,
+                                 argus_ros::Config::Response>("Config", std::bind(&CameraNodelet::Config, this,
+                                                                                  std::placeholders::_1,
+                                                                                  std::placeholders::_2));
 
   this->start_srv_ =
-    this->np_.advertiseService<royale_ros::Start::Request,
-                               royale_ros::Start::Response>
-    ("Start", std::bind(&CameraNodelet::Start, this,
-                        std::placeholders::_1,
-                        std::placeholders::_2));
+      this->np_.advertiseService<argus_ros::Start::Request,
+                                 argus_ros::Start::Response>("Start", std::bind(&CameraNodelet::Start, this,
+                                                                                std::placeholders::_1,
+                                                                                std::placeholders::_2));
 
   this->stop_srv_ =
-    this->np_.advertiseService<royale_ros::Stop::Request,
-                               royale_ros::Stop::Response>
-    ("Stop", std::bind(&CameraNodelet::Stop, this,
-                       std::placeholders::_1,
-                       std::placeholders::_2));
+      this->np_.advertiseService<argus_ros::Stop::Request,
+                                 argus_ros::Stop::Response>("Stop", std::bind(&CameraNodelet::Stop, this,
+                                                                              std::placeholders::_1,
+                                                                              std::placeholders::_2));
+
+  //-------------- BNR -----------/
+  this->rrf_record_start_srv_ =
+      this->np_.advertiseService<StartRecReq,
+                                 StartRecResp>("StartRecord", std::bind(&CameraNodelet::StartRecord, this,
+                                                                        std::placeholders::_1,
+                                                                        std::placeholders::_2));
+
+  this->rrf_record_stop_srv_ =
+      this->np_.advertiseService<StopRecReq,
+                                 StopRecResp>("StopRecord", std::bind(&CameraNodelet::StopRecord, this,
+                                                                      std::placeholders::_1,
+                                                                      std::placeholders::_2));
+  //------------------------------/
 
   //---------------------
   // Topic subscriptions
@@ -133,259 +172,241 @@ royale_ros::CameraNodelet::onInit()
 
   // L1 access call
   this->exp_time_sub_ =
-    this->np_.subscribe("SetExposureTime", 1,
-                        &CameraNodelet::SetExposureTimeCb, this);
+      this->np_.subscribe("SetExposureTime", 1,
+                          &CameraNodelet::SetExposureTimeCb, this);
   // L2 access call
   this->exp_times_sub_ =
-    this->np_.subscribe("SetExposureTimes", 1,
-                        &CameraNodelet::SetExposureTimesCb, this);
+      this->np_.subscribe("SetExposureTimes", 1,
+                          &CameraNodelet::SetExposureTimesCb, this);
 }
 
-void
-royale_ros::CameraNodelet::InitCamera()
-{
+//-------------- BNR -----------/
+bool argus_ros::CameraNodelet::ParseMaskFile() {
+  std::ifstream maskfile;
+  maskfile.open(image_mask_loc_);
+  if (!maskfile) {
+    NODELET_WARN_STREAM("CameraNodelet::ParseMaskFile: Error opening file: " << image_mask_loc_);
+    return false;
+  }
+  int rows, cols;
+  maskfile >> rows;
+  maskfile >> cols;
+  image_mask_.create(rows, cols, CV_32FC1);
+  for (int i = 0; i < rows; i++)
+    for (int j = 0; j < cols; j++)
+      maskfile >> image_mask_.at<float>(i, j);
+  NODELET_INFO_STREAM("CameraNodelet::ParseMaskFile: Populated the file");
+  return true;
+}
+
+void argus_ros::CameraNodelet::PublishCameraStatus() {
+  argus_ros::CameraOpStatus msg;
+  msg.temperature = cur_temp_;
+  for (auto& freq : cur_mod_freq_)
+    msg.frequencies.push_back(freq);
+  for (auto& ill : cur_illumin_)
+    msg.illumination_enabled.push_back(ill);
+  cam_hw_info_pub_.publish(msg);
+  last_stat_frame_ = ros::Time::now();
+}
+//------------------------------/
+
+void argus_ros::CameraNodelet::InitCamera() {
   {
     std::lock_guard<std::mutex> lock(this->on_mutex_);
-    if (! this->on_)
-      {
-        this->RescheduleTimer();
-        return;
-      }
+    if (!this->on_) {
+      this->RescheduleTimer();
+      return;
+    }
   }
 
   std::lock_guard<std::mutex> lock(this->cam_mutex_);
 
   // For an already initialized camera, this acts as a heartbeat
-  if (this->cam_ != nullptr)
+  if (this->cam_ != nullptr) {
     {
-      {
-        // New scope to check to see if the camera has timedout
-        std::lock_guard<std::mutex> lock(this->last_frame_mutex_);
-        if ((ros::Time::now() - this->last_frame_).toSec() >
-            this->timeout_secs_)
-          {
-            NODELET_WARN_STREAM("Camera timeout!");
-            this->cam_.reset();
-          }
+      // New scope to check to see if the camera has timedout
+      std::lock_guard<std::mutex> lock(this->last_frame_mutex_);
+      if ((ros::Time::now() - this->last_frame_).toSec() >
+          this->timeout_secs_) {
+        NODELET_WARN_STREAM("Camera timeout!");
+        this->cam_.reset();
       }
-
-      this->RescheduleTimer();
-      return;
     }
 
-  NODELET_INFO_STREAM("Probing for available royale cameras...");
-  royale::CameraManager manager(this->access_code_ == "-"
-                                ? "" : this->access_code_);
+    //-------------- BNR -----------/
+    {
+      std::lock_guard<std::mutex> calock(this->hw_mutex_);
+      if ((ros::Time::now() - last_stat_frame_).toSec() > stat_secs_)
+        this->PublishCameraStatus();
+    }
+    //------------------------------/
+
+    this->RescheduleTimer();
+    return;
+  }
+
+  NODELET_INFO_STREAM("Probing for available argus cameras...");
+  argus::CameraManager manager(this->access_code_ == "-"
+                                   ? ""
+                                   : this->access_code_);
   auto camlist = manager.getConnectedCameraList();
 
-  if (! camlist.empty())
-    {
-      if (this->serial_number_ == "-")
-        {
-          // grab the first camera found
-          this->cam_ = manager.createCamera(camlist.at(0));
-          this->serial_number_ = std::string(camlist.at(0).c_str());
-          this->np_.setParam("serial_number", this->serial_number_);
-        }
-      else
-        {
-          // see if the specific camera was detected
-          auto result = std::find(std::begin(camlist), std::end(camlist),
-                                  this->serial_number_);
-          if (result != std::end(camlist))
-            {
-              // the specific camera is available
-              this->cam_ = manager.createCamera(*result);
-            }
-          else
-            {
-              // the specific camera is not available
-              NODELET_WARN_STREAM("Could not find royale camera: "
-                                  << this->serial_number_);
-            }
-        }
+  if (!camlist.empty()) {
+    if (this->serial_number_ == "-") {
+      // grab the first camera found
+      this->cam_ = manager.createCamera(camlist.at(0));
+      this->serial_number_ = std::string(camlist.at(0).c_str());
+      this->np_.setParam("serial_number", this->serial_number_);
+    } else {
+      // see if the specific camera was detected
+      auto result = std::find(std::begin(camlist), std::end(camlist),
+                              this->serial_number_);
+      if (result != std::end(camlist)) {
+        // the specific camera is available
+        this->cam_ = manager.createCamera(*result);
+      } else {
+        // the specific camera is not available
+        NODELET_WARN_STREAM("Could not find argus camera: "
+                            << this->serial_number_);
+      }
     }
-  else
-    {
-      NODELET_WARN_STREAM("No royale cameras found on bus!");
-    }
+  } else {
+    NODELET_WARN_STREAM("No argus cameras found on bus!");
+  }
 
-  if (this->cam_ != nullptr)
-    {
-      if (this->cam_->initialize() != OK_)
-        {
-          NODELET_INFO_STREAM("Failed to initialize() camera: "
-                              << this->serial_number_);
-          this->cam_.reset();
-        }
-      else
-        {
-          NODELET_INFO_STREAM("Instantiated royale camera: "
-                              << this->serial_number_);
+  if (this->cam_ != nullptr) {
+    if (this->cam_->initialize() != OK_) {
+      NODELET_INFO_STREAM("Failed to initialize() camera: "
+                          << this->serial_number_);
+      this->cam_.reset();
+    } else {
+      NODELET_INFO_STREAM("Instantiated argus camera: "
+                          << this->serial_number_);
 
-          royale::CameraAccessLevel level;
-          if (this->cam_->getAccessLevel(level) == OK_)
-            {
-              this->access_level_ = (std::uint32_t) level;
-            }
-          NODELET_INFO_STREAM("Access level: " << this->access_level_);
+      argus::CameraAccessLevel level;
+      if (this->cam_->getAccessLevel(level) == OK_) {
+        this->access_level_ = (std::uint32_t)level;
+      }
+      NODELET_INFO_STREAM("Access level: " << this->access_level_);
 
-          //
-          // we only create our image publishers once regardless
-          // of how many times the node polls the bus for a camera
-          //
-          if (! this->instantiated_publishers_)
-            {
-              //
-              // Dynamically create our image publishers based on the max
-              // number of streams available across all camera use-cases
-              //
-              royale::Vector<royale::String> use_cases;
-              if (this->cam_->getUseCases(use_cases) == OK_)
-                {
-                  std::uint32_t max_num_streams = 1;
-                  for(auto& uc : use_cases)
-                    {
-                      std::uint32_t nstreams = 0;
-                      if (this->cam_->getNumberOfStreams(uc, nstreams) != OK_)
-                        {
-                          NODELET_WARN_STREAM("Could not get stream count: "
-                                              << uc.c_str());
-                        }
-                      else
-                        {
-                          if (nstreams > max_num_streams)
-                            {
-                              max_num_streams = nstreams;
-                            }
-                        }
-
-                      // add the use-case to our stream id LUT
-                      this->stream_id_lut_.emplace(
-                        std::make_pair(std::string(uc.c_str()),
-                                       std::vector<std::uint16_t>()));
-
-                    } // end: for(auto& uc : use_cases)
-
-                  NODELET_INFO_STREAM("Max number of streams: "
-                                      << max_num_streams);
-                  for (std::uint32_t i = 0; i < max_num_streams; ++i)
-                    {
-                      this->intrinsic_pubs_.push_back(
-                        this->np_.advertise<sensor_msgs::CameraInfo>(
-                          "stream/" + std::to_string(i+1) + "/camera_info", 1));
-
-                      this->exposure_pubs_.push_back(
-                        this->np_.advertise<royale_ros::ExposureTimes>(
-                          "stream/" + std::to_string(i+1) +
-                          "/exposure_times", 1));
-
-                      this->cloud_pubs_.push_back(
-                        this->np_.advertise<pcl::PointCloud<pcl::PointXYZI> >(
-                          "stream/" + std::to_string(i+1) + "/cloud", 1));
-
-                      this->xyz_pubs_.push_back(
-                        this->it_->advertise(
-                          "stream/" + std::to_string(i+1) + "/xyz", 1));
-
-                      this->noise_pubs_.push_back(
-                        this->it_->advertise(
-                          "stream/" + std::to_string(i+1) + "/noise", 1));
-
-                      this->gray_pubs_.push_back(
-                        this->it_->advertise(
-                          "stream/" + std::to_string(i+1) + "/gray", 1));
-
-                      this->conf_pubs_.push_back(
-                        this->it_->advertise(
-                          "stream/" + std::to_string(i+1) + "/conf", 1));
-                    }
-
-                  this->instantiated_publishers_ = true;
-                  this->CacheIntrinsics();
-                }
-            } // end: if (! this->instantiated_publishers_)
-
-          //
-          // This whole block is a candidate to be a function for starting the
-          // camera stream
-          //
-          if (this->initial_use_case_ != "-")
-            {
-              NODELET_INFO_STREAM("Attempting to set initial use case to: "
-                                  << this->initial_use_case_);
-              if (this->cam_->setUseCase(
-                    royale::String(this->initial_use_case_)) != OK_)
-                {
-                  NODELET_WARN_STREAM("Could not set use case to: "
-                                      << this->initial_use_case_);
-                }
-
-              // we don't want to do this again, so we use our sentinel
-              this->initial_use_case_ = "-";
-            }
-
-          {
-            std::lock_guard<std::mutex> lock(this->current_use_case_mutex_);
-            royale::String current_use_case;
-            if (this->cam_->getCurrentUseCase(current_use_case) == OK_)
-              {
-                this->current_use_case_ = std::string(current_use_case.c_str());
+      //
+      // we only create our image publishers once regardless
+      // of how many times the node polls the bus for a camera
+      //
+      if (!this->instantiated_publishers_) {
+        //
+        // Dynamically create our image publishers based on the max
+        // number of streams available across all camera use-cases
+        //
+        std::vector<std::string> use_cases;
+        if (this->cam_->getUseCases(use_cases) == OK_) {
+          std::uint32_t max_num_streams = 1;
+          for (auto& uc : use_cases) {
+            std::uint32_t nstreams = 0;
+            if (this->cam_->getNumberOfStreams(uc, nstreams) != OK_) {
+              NODELET_WARN_STREAM("Could not get stream count: "
+                                  << uc.c_str());
+            } else {
+              if (nstreams > max_num_streams) {
+                max_num_streams = nstreams;
               }
-            else
-              {
-                NODELET_WARN_STREAM("Could not discover current use case!");
-                this->current_use_case_ = "UNKNOWN";
-              }
-          }
+            }
 
-          this->cam_->registerDataListener(this);
-          this->cam_->startCapture();
-          {
-            std::lock_guard<std::mutex> lock(this->last_frame_mutex_);
-            this->last_frame_ = ros::Time::now();
+            // add the use-case to our stream id LUT
+            this->stream_id_lut_.emplace(
+                std::make_pair(std::string(uc.c_str()),
+                               std::vector<std::uint16_t>()));
+          }  // end: for(auto& uc : use_cases)
+
+          NODELET_INFO_STREAM("Max number of streams: "
+                              << max_num_streams);
+          for (std::uint32_t i = 0; i < max_num_streams; ++i) {
+            this->intrinsic_pubs_.push_back(
+                this->np_.advertise<sensor_msgs::CameraInfo>(
+                    "stream/" + std::to_string(i + 1) + "/camera_info", 1));
+
+            this->exposure_pubs_.push_back(
+                this->np_.advertise<argus_ros::ExposureTimes>(
+                    "stream/" + std::to_string(i + 1) +
+                        "/exposure_times",
+                    1));
+
+            this->cloud_pubs_.push_back(
+                this->np_.advertise<pcl::PointCloud<pcl::PointXYZI> >(
+                    "stream/" + std::to_string(i + 1) + "/cloud", 1));
+
+            this->xyz_pubs_.push_back(
+                this->it_->advertise(
+                    "stream/" + std::to_string(i + 1) + "/xyz", 1));
+
+            this->noise_pubs_.push_back(
+                this->it_->advertise(
+                    "stream/" + std::to_string(i + 1) + "/noise", 1));
+
+            this->gray_pubs_.push_back(
+                this->it_->advertise(
+                    "stream/" + std::to_string(i + 1) + "/gray", 1));
+
+            this->conf_pubs_.push_back(
+                this->it_->advertise(
+                    "stream/" + std::to_string(i + 1) + "/conf", 1));
+
+            //-------------- BNR -----------/
+            this->depth_pubs_.push_back(
+                this->it_->advertise(
+                    "stream/" + std::to_string(i + 1) + "/depth_image", 1));
+
+            this->unit_vec_pubs_.push_back(
+                this->it_->advertise(
+                    "stream/" + std::to_string(i + 1) + "/unit_vectors", 1));
+            //------------------------------/
           }
-          //
-          // END OF BLOCK THAT SHOULD BE BROKEN OUT INTO FUNCTION
-          //
+          //-------------- BNR -----------/
+          this->image_mask_pub_ = this->np_.advertise<sensor_msgs::Image>(
+              "stream/image_mask", 1);
+          this->cam_hw_info_pub_ = this->np_.advertise<argus_ros::CameraOpStatus>(
+              "stream/camera_op_status", 1);
+          //------------------------------/
+
+          this->instantiated_publishers_ = true;
+          this->CacheIntrinsics();
         }
+      }  // end: if (! this->instantiated_publishers_)
+      StartCameraStream();
     }
+  }
 
   this->RescheduleTimer();
 }
 
-void
-royale_ros::CameraNodelet::CacheIntrinsics()
-{
+void argus_ros::CameraNodelet::CacheIntrinsics() {
   std::lock_guard<std::mutex> lock(this->intrinsic_mutex_);
   NODELET_INFO_STREAM("Caching intrinsic calibration...");
 
   this->intrinsic_msg_ = sensor_msgs::CameraInfo();
 
-  royale::LensParameters intrinsics;
-  royale::CameraStatus status = this->cam_->getLensParameters(intrinsics);
-  if (status != OK_)
-    {
-      NODELET_WARN_STREAM("Could not get lens parameters: "
-                          << royale::getErrorString(status).c_str());
-      return;
-    }
+  argus::LensParameters intrinsics;
+  argus::CameraStatus status = this->cam_->getLensParameters(intrinsics);
+  if (status != OK_) {
+    NODELET_WARN_STREAM("Could not get lens parameters: "
+                        << argus::getErrorString(status).c_str());
+    return;
+  }
 
   std::uint16_t max_width, max_height;
   status = this->cam_->getMaxSensorHeight(max_height);
-  if (status != OK_)
-    {
-      NODELET_WARN_STREAM("Could not get max sensor height: "
-                          << royale::getErrorString(status).c_str());
-      return;
-    }
+  if (status != OK_) {
+    NODELET_WARN_STREAM("Could not get max sensor height: "
+                        << argus::getErrorString(status).c_str());
+    return;
+  }
   status = this->cam_->getMaxSensorWidth(max_width);
-  if (status != OK_)
-    {
-      NODELET_WARN_STREAM("Could not get max sensor width: "
-                          << royale::getErrorString(status).c_str());
-      return;
-    }
+  if (status != OK_) {
+    NODELET_WARN_STREAM("Could not get max sensor width: "
+                        << argus::getErrorString(status).c_str());
+    return;
+  }
 
   // image dimensions
   this->intrinsic_msg_.height = max_height;
@@ -437,27 +458,272 @@ royale_ros::CameraNodelet::CacheIntrinsics()
   this->intrinsic_msg_.P[11] = 0;
 }
 
-void
-royale_ros::CameraNodelet::RescheduleTimer()
-{
+void argus_ros::CameraNodelet::StartCameraStream() {
+  if (this->initial_use_case_ != "-") {
+    NODELET_INFO_STREAM("Attempting to set initial use case to: "
+                        << this->initial_use_case_);
+    if (this->cam_->setUseCase(std::string(this->initial_use_case_)) != OK_) {
+      NODELET_WARN_STREAM("Could not set use case to: "
+                          << this->initial_use_case_);
+    }
+
+    // we don't want to do this again, so we use our sentinel
+    this->initial_use_case_ = "-";
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(this->current_use_case_mutex_);
+    std::string current_use_case;
+    if (this->cam_->getCurrentUseCase(current_use_case) == OK_) {
+      this->current_use_case_ = std::string(current_use_case.c_str());
+    } else {
+      NODELET_WARN_STREAM("Could not discover current use case!");
+      this->current_use_case_ = "UNKNOWN";
+    }
+  }
+
+  if (this->cam_->registerDataListenerExtended(this) != OK_) {
+    NODELET_ERROR_STREAM("Couldn't register data listener!");
+    return;
+  }
+
+  // Enable auto-exposure by default
+  if (cam_->setExposureMode(argus::ExposureMode::AUTOMATIC) != OK_) {
+    NODELET_ERROR_STREAM("Couldn't turn on auto exposure mode!");
+    return;
+  }
+
+  if (this->config_populated_) {
+    std::ifstream cfs(config_file_);
+    if (cfs.is_open()) {
+      json j;
+      cfs >> j;
+      std::string set_config;
+      int set_ret = SetConfigurationParams(j, set_config);
+      if (!set_ret)
+        NODELET_ERROR_STREAM("Couldn't set the required parameters: " << j);
+    } else {
+      NODELET_ERROR_STREAM("Unable to open configuration file!");
+    }
+  }
+
+  this->cam_->startCapture();
+
+  {
+    std::lock_guard<std::mutex> lock(this->last_frame_mutex_);
+    this->last_frame_ = ros::Time::now();
+  }
+
+  {
+    std::lock_guard<std::mutex> chlock(this->hw_mutex_);
+    this->last_stat_frame_ = ros::Time::now();
+  }
+
+  // Populate unit vecetors
+  uvec_data_.reset(new argus::DepthData);
+  if (this->cam_->getLensDirections(*uvec_data_) != OK_) {
+    NODELET_WARN_STREAM("Unable to access unit vectors!");
+    return;
+  }
+
+  NODELET_INFO_STREAM("Camera started!");
+}
+
+void argus_ros::CameraNodelet::RescheduleTimer() {
   this->timer_.stop();
   this->timer_.setPeriod(ros::Duration(this->poll_bus_secs_));
   this->timer_.start();
 }
 
-bool
-royale_ros::CameraNodelet::Start(royale_ros::Start::Request& req,
-                                 royale_ros::Start::Response& resp)
-{
+int argus_ros::CameraNodelet::SetConfigurationParams(json& j,
+                                                     std::string& status_msg) {
+  int status_ret = 0;
+  status_msg = "OK";
+  //
+  // Imager parameters
+  //
+  argus::CameraStatus status = OK_;
+  json j_img = j["Imager"];
+  if (!j_img.is_null()) {
+    if (j_img.count("CurrentUseCase") == 1) {
+      json uc_root = j_img["CurrentUseCase"];
+
+      for (auto it = uc_root.begin(); it != uc_root.end(); ++it) {
+        std::string key = it.key();
+        // NODELET_INFO_STREAM("Processing: key="
+        //                      << key << ", val="
+        //                      << uc_root[key].dump(2));
+
+        if (key == "Name") {
+          status =
+              this->cam_->setUseCase(
+                  std::string(uc_root[key].get<std::string>()));
+
+          if (status == OK_) {
+            {
+              std::lock_guard<std::mutex>
+                  lock(this->current_use_case_mutex_);
+              std::string current_use_case;
+              if (this->cam_->getCurrentUseCase(
+                      current_use_case) == OK_) {
+                this->current_use_case_ =
+                    std::string(current_use_case.c_str());
+              } else {
+                NODELET_WARN_STREAM("current_use_case is stale!");
+              }
+            }
+          }
+        } else if (key == "ExposureMode") {
+          json emode_dict = uc_root[key];
+          for (json::iterator it = emode_dict.begin();
+               it != emode_dict.end(); ++it) {
+            std::uint16_t sid = std::stoi(std::string(it.key()));
+            std::uint32_t emode =
+                std::stoi(it.value().get<std::string>());
+
+            argus::ExposureMode ex =
+                emode == 0 ? argus::ExposureMode::MANUAL : argus::ExposureMode::AUTOMATIC;
+            status = this->cam_->setExposureMode(ex, sid);
+          }
+        } else if (key == "ProcessingParameters") {
+          if (this->access_level_ >= 2) {
+            json pp_dict = uc_root[key];
+            for (json::iterator sid_it = pp_dict.begin();
+                 sid_it != pp_dict.end(); ++sid_it) {
+              std::uint16_t sid =
+                  std::stoi(std::string(sid_it.key()));
+              // create a lut mapping string->id for the
+              // processing parameters so we can call into argus
+              // to set the values.
+              //
+              // Unfortunately, to get the params we need the
+              // stream id, so we make this lut for each stream id
+              // present in the json
+              //
+              std::unordered_map<std::string,
+                                 argus::ProcessingFlag>
+                  pp_lut;
+
+              argus::ProcessingParameterVector ppvec;
+              if (this->cam_->getProcessingParameters(ppvec, sid) == OK_) {
+                for (auto& pflag_pair : ppvec) {
+                  std::string pname(
+                      argus::getProcessingFlagName(
+                          pflag_pair.first)
+                          .data());
+
+                  pp_lut.emplace(
+                      std::make_pair(pname, pflag_pair.first));
+                }
+              }
+              argus::ProcessingParameterVector ppvec_new;
+
+              json pp_values_dict = pp_dict[sid_it.key()];
+              for (json::iterator pp_it = pp_values_dict.begin();
+                   pp_it != pp_values_dict.end(); ++pp_it) {
+                std::string pp_key = pp_it.key();
+                std::string pp_val = pp_values_dict[pp_key];
+                auto const tpos = pp_key.find_last_of('_');
+                if (tpos == std::string::npos) {
+                  NODELET_WARN_STREAM(
+                      "Could not pull the type string from: "
+                      << pp_key);
+                  continue;
+                }
+
+                std::string type_str = pp_key.substr(tpos + 1);
+                std::transform(type_str.begin(), type_str.end(),
+                               type_str.begin(),
+                               [](unsigned char c) { return std::tolower(c); });
+
+                argus::Variant var;
+                if (type_str == "int") {
+                  var.setInt(std::stoi(pp_val));
+                } else if (type_str == "float") {
+                  var.setFloat(std::stof(pp_val));
+                } else if (type_str == "bool") {
+                  std::transform(pp_val.begin(),
+                                 pp_val.end(),
+                                 pp_val.begin(),
+                                 [](unsigned char c) { return std::tolower(c); });
+
+                  var.setBool(((pp_val == "true") ||
+                               (pp_val == "t") ||
+                               (pp_val == "yes") ||
+                               (pp_val == "y") ||
+                               (pp_val == "1"))
+                                  ? true
+                                  : false);
+                } else {
+                  NODELET_WARN_STREAM(
+                      "Bad type for `Variant': "
+                      << type_str);
+                  continue;
+                }
+
+                try {
+                  ppvec_new.push_back(
+                      std::pair<
+                          argus::ProcessingFlag,
+                          argus::Variant>(
+                          pp_lut.at(pp_key), var));
+                } catch (const std::out_of_range& ex) {
+                  NODELET_WARN_STREAM(pp_key << "=" << pp_val);
+                  NODELET_WARN_STREAM(ex.what());
+                  continue;
+                }
+              }
+
+              status =
+                  this->cam_->setProcessingParameters(ppvec_new, sid);
+              if (status != OK_) {
+                NODELET_WARN_STREAM(
+                    (int)status << ": " << argus::getErrorString(status).c_str());
+              }
+            }
+          } else {
+            NODELET_WARN_STREAM(
+                "'ProcessingParameters' requires L2 access!");
+          }
+        } else {
+          // read-only parameter
+          continue;
+        }
+
+        //
+        // Hard stop!
+        //
+        if (status != OK_) {
+          status_ret = static_cast<int>(status);
+          status_msg =
+              std::string(argus::getErrorString(status).c_str());
+
+          NODELET_WARN_STREAM("While processing: "
+                              << key << " -> (" << status_ret
+                              << ") " << status_msg);
+          NODELET_INFO_STREAM("json was:\n"
+                              << j);
+          return true;
+        }
+      }
+    }
+  }
+  return status_ret;
+}
+
+bool argus_ros::CameraNodelet::Start(argus_ros::Start::Request& req,
+                                     argus_ros::Start::Response& resp) {
+  UNUSED(req);
+  UNUSED(resp);
   std::lock_guard<std::mutex> lock(this->on_mutex_);
   this->on_ = true;
   return true;
 }
 
-bool
-royale_ros::CameraNodelet::Stop(royale_ros::Stop::Request& req,
-                                royale_ros::Stop::Response& resp)
-{
+bool argus_ros::CameraNodelet::Stop(argus_ros::Stop::Request& req,
+                                    argus_ros::Stop::Response& resp) {
+  UNUSED(req);
+  UNUSED(resp);
   std::lock_guard<std::mutex> on_lock(this->on_mutex_);
   std::lock_guard<std::mutex> cam_lock(this->cam_mutex_);
   this->cam_.reset();
@@ -465,254 +731,74 @@ royale_ros::CameraNodelet::Stop(royale_ros::Stop::Request& req,
   return true;
 }
 
-bool
-royale_ros::CameraNodelet::Config(royale_ros::Config::Request& req,
-                                  royale_ros::Config::Response& resp)
-{
+bool argus_ros::CameraNodelet::StartRecord(argus_ros::StartRecord::Request& req,
+                                           argus_ros::StartRecord::Response& resp) {
+  std::string filename = (req.path == "" ? std::getenv("HOME") : req.path);
+  time_t rawtime = time(0);
+  struct tm* ptm = std::localtime(&rawtime);
+  char buf[80];
+  std::strftime(buf, sizeof(buf), "%Y_%m_%d_%H%M%S", ptm);
+  std::string cur_time(buf);
+  filename += "/";
+  filename += cur_time;
+  filename += "_";
+  filename += this->sensor_frame_;
+  filename += ".rrf";
+  NODELET_INFO_STREAM("Requesting to record data at " << filename);
+  resp.status = argus::getStatusString(this->cam_->startRecording(filename, req.num_frames,
+                                                                  req.frames_skip, req.ms_skip));
+  NODELET_INFO_STREAM("ArgusNodelet::StartRecord: " << resp.status);
+  return true;
+}
+
+bool argus_ros::CameraNodelet::StopRecord(argus_ros::StopRecord::Request& req,
+                                          argus_ros::StopRecord::Response& resp) {
+  UNUSED(req);
+  argus::CameraStatus status = cam_->stopRecording();
+  resp.status = argus::getStatusString(status);
+  NODELET_INFO_STREAM("ArgusNodelet::StopRecord: " << resp.status);
+  if (status != OK_)
+    return false;
+  else
+    return true;
+}
+
+bool argus_ros::CameraNodelet::Config(argus_ros::Config::Request& req,
+                                      argus_ros::Config::Response& resp) {
   std::lock_guard<std::mutex> lock(this->cam_mutex_);
-  if (this->cam_ == nullptr)
-    {
-      NODELET_ERROR_STREAM("No camera instantiated with serial number: "
-                           << this->serial_number_);
-      return false;
-    }
+  if (this->cam_ == nullptr) {
+    NODELET_ERROR_STREAM("No camera instantiated with serial number: "
+                         << this->serial_number_);
+    return false;
+  }
 
   NODELET_INFO_STREAM("Handling Config request...");
 
   json j;
-  try
-    {
-      j = json::parse(req.json);
-    }
-  catch (const std::exception& ex)
-    {
-      NODELET_ERROR_STREAM("Failed to parse json: " << ex.what());
-      NODELET_INFO_STREAM("json was:\n" << req.json);
-      resp.status = -1;
-      resp.msg = ex.what();
-      return true;
-    }
+  try {
+    j = json::parse(req.json);
+  } catch (const std::exception& ex) {
+    NODELET_ERROR_STREAM("Failed to parse json: " << ex.what());
+    NODELET_INFO_STREAM("json was:\n"
+                        << req.json);
+    resp.status = -1;
+    resp.msg = ex.what();
+    return true;
+  }
 
-  if (! j.is_object())
-    {
-      NODELET_ERROR_STREAM("The passed in json should be an object!");
-      NODELET_INFO_STREAM("json was:\n" << j.dump());
-      resp.status = -1;
-      resp.msg = "The passed in json should be an object";
-      return true;
-    }
-
-  //
-  // Imager parameters
-  //
-  royale::CameraStatus status = OK_;
-  json j_img = j["Imager"];
-  if (! j_img.is_null())
-    {
-      if (j_img.count("CurrentUseCase") == 1)
-        {
-          json uc_root = j_img["CurrentUseCase"];
-
-          for (auto it = uc_root.begin(); it != uc_root.end(); ++it)
-            {
-              std::string key = it.key();
-              // NODELET_INFO_STREAM("Processing: key="
-              //                      << key << ", val="
-              //                      << uc_root[key].dump(2));
-
-              if (key == "Name")
-                {
-                  status =
-                    this->cam_->setUseCase(
-                      royale::String(uc_root[key].get<std::string>()));
-
-                  if (status == OK_)
-                    {
-                      {
-                        std::lock_guard<std::mutex>
-                          lock(this->current_use_case_mutex_);
-                        royale::String current_use_case;
-                        if (this->cam_->getCurrentUseCase(
-                              current_use_case) == OK_)
-                          {
-                            this->current_use_case_ =
-                              std::string(current_use_case.c_str());
-                          }
-                        else
-                          {
-                            NODELET_WARN_STREAM("current_use_case is stale!");
-                          }
-                      }
-                    }
-                }
-              else if (key == "ExposureMode")
-                {
-                  json emode_dict = uc_root[key];
-                  for (json::iterator it = emode_dict.begin();
-                       it != emode_dict.end(); ++it)
-                    {
-                      std::uint16_t sid = std::stoi(std::string(it.key()));
-                      std::uint32_t emode =
-                        std::stoi(it.value().get<std::string>());
-
-                      royale::ExposureMode ex =
-                        emode == 0 ?
-                        royale::ExposureMode::MANUAL :
-                        royale::ExposureMode::AUTOMATIC;
-                      status = this->cam_->setExposureMode(ex, sid);
-                    }
-                }
-              else if (key == "ProcessingParameters")
-                {
-                  if (this->access_level_ >= 2)
-                    {
-                      json pp_dict = uc_root[key];
-                      for (json::iterator sid_it = pp_dict.begin();
-                           sid_it != pp_dict.end(); ++sid_it)
-                        {
-                          std::uint16_t sid =
-                            std::stoi(std::string(sid_it.key()));
-
-                          //
-                          // create a lut mapping string->id for the
-                          // processing parameters so we can call into royale
-                          // to set the values.
-                          //
-                          // Unfortunately, to get the params we need the
-                          // stream id, so we make this lut for each stream id
-                          // present in the json
-                          //
-                          std::unordered_map<std::string,
-                                             royale::ProcessingFlag> pp_lut;
-
-                          royale::ProcessingParameterVector ppvec;
-                          if (this->cam_->getProcessingParameters(ppvec, sid)
-                              == OK_)
-                            {
-                              for (auto& pflag_pair : ppvec)
-                                {
-                                  std::string pname(
-                                    royale::getProcessingFlagName(
-                                      pflag_pair.first).data());
-
-                                  pp_lut.emplace(
-                                    std::make_pair(pname, pflag_pair.first));
-                                }
-                            }
-
-                          royale::ProcessingParameterVector ppvec_new;
-
-                          json pp_values_dict = pp_dict[sid_it.key()];
-                          for (json::iterator pp_it = pp_values_dict.begin();
-                               pp_it != pp_values_dict.end(); ++ pp_it)
-                            {
-                              std::string pp_key = pp_it.key();
-                              std::string pp_val = pp_values_dict[pp_key];
-                              auto const tpos = pp_key.find_last_of('_');
-                              if (tpos == std::string::npos)
-                                {
-                                  NODELET_WARN_STREAM(
-                                    "Could not pull the type string from: "
-                                    << pp_key);
-                                  continue;
-                                }
-
-                              std::string type_str = pp_key.substr(tpos+1);
-                              std::transform(type_str.begin(), type_str.end(),
-                                             type_str.begin(),
-                                             [](unsigned char c)
-                                             { return std::tolower(c); });
-
-                              royale::Variant var;
-                              if (type_str == "int")
-                                {
-                                  var.setInt(std::stoi(pp_val));
-                                }
-                              else if (type_str == "float")
-                                {
-                                  var.setFloat(std::stof(pp_val));
-                                }
-                              else if (type_str == "bool")
-                                {
-                                  std::transform(pp_val.begin(),
-                                                 pp_val.end(),
-                                                 pp_val.begin(),
-                                                 [](unsigned char c)
-                                                 { return std::tolower(c); });
-
-                                  var.setBool(((pp_val == "true") ||
-                                               (pp_val == "t") ||
-                                               (pp_val == "yes") ||
-                                               (pp_val == "y") ||
-                                               (pp_val == "1")) ? true : false);
-                                }
-                              else
-                                {
-                                  NODELET_WARN_STREAM(
-                                   "Bad type for `Variant': "
-                                   << type_str);
-                                  continue;
-                                }
-
-                              try
-                                {
-                                  ppvec_new.push_back(
-                                    royale::Pair<
-                                      royale::ProcessingFlag,
-                                      royale::Variant>(
-                                        pp_lut.at(pp_key), var));;
-                                }
-                              catch (const std::out_of_range& ex)
-                                {
-                                  NODELET_WARN_STREAM(pp_key << "=" << pp_val);
-                                  NODELET_WARN_STREAM(ex.what());
-                                  continue;
-                                }
-                            }
-
-                          status =
-                            this->cam_->setProcessingParameters(ppvec_new, sid);
-                          if (status != OK_)
-                            {
-                              NODELET_WARN_STREAM(
-                                (int) status << ": " <<
-                                royale::getErrorString(status).c_str());
-                            }
-                        }
-                    }
-                  else
-                    {
-                      NODELET_WARN_STREAM(
-                        "'ProcessingParameters' requires L2 access!");
-                    }
-                }
-              else
-                {
-                  // read-only parameter
-                  continue;
-                }
-
-              //
-              // Hard stop!
-              //
-              if (status != OK_)
-                {
-                  resp.status = (int) status;
-                  resp.msg =
-                    std::string(royale::getErrorString(status).c_str());
-
-                  NODELET_WARN_STREAM("While processing: "
-                                      << key << " -> (" << resp.status
-                                      << ") " << resp.msg);
-                  NODELET_INFO_STREAM("json was:\n" << req.json);
-                  return true;
-                }
-            }
-        }
-    }
+  if (!j.is_object()) {
+    NODELET_ERROR_STREAM("The passed in json should be an object!");
+    NODELET_INFO_STREAM("json was:\n"
+                        << j.dump());
+    resp.status = -1;
+    resp.msg = "The passed in json should be an object";
+    return true;
+  }
 
   resp.status = 0;
-  resp.msg = "OK";
+  std::string ret_msg;
+  resp.status = SetConfigurationParams(j, ret_msg);
+  resp.msg = ret_msg;
 
   // avoid camera timeouts
   {
@@ -723,48 +809,42 @@ royale_ros::CameraNodelet::Config(royale_ros::Config::Request& req,
   return true;
 }
 
-bool
-royale_ros::CameraNodelet::Dump(royale_ros::Dump::Request& req,
-                                royale_ros::Dump::Response& resp)
-{
+bool argus_ros::CameraNodelet::Dump(argus_ros::Dump::Request& req,
+                                    argus_ros::Dump::Response& resp) {
+  UNUSED(req);
   std::lock_guard<std::mutex> lock(this->cam_mutex_);
-  if (this->cam_ == nullptr)
-    {
-      NODELET_ERROR_STREAM("No camera instantiated with serial number: "
-                           << this->serial_number_);
-      return false;
-    }
+  if (this->cam_ == nullptr) {
+    NODELET_ERROR_STREAM("No camera instantiated with serial number: "
+                         << this->serial_number_);
+    return false;
+  }
 
   //-------------------------------------------------------------------
   // "Device" information
   //-------------------------------------------------------------------
 
-  royale::String r_string;
+  std::string r_string;
   std::unordered_map<std::string, std::string> device_info;
-  if (this->cam_->getId(r_string) == OK_)
-    {
-      device_info.emplace(std::make_pair("Id", std::string(r_string.c_str())));
-    }
+  if (this->cam_->getId(r_string) == OK_) {
+    device_info.emplace(std::make_pair("Id", std::string(r_string.c_str())));
+  }
 
-  if (this->cam_->getCameraName(r_string) == OK_)
-    {
-      device_info.emplace(
+  if (this->cam_->getCameraName(r_string) == OK_) {
+    device_info.emplace(
         std::make_pair("Name", std::string(r_string.c_str())));
-    }
+  }
 
   //-------------------------------------------------------------------
   // "Imager" information
   //-------------------------------------------------------------------
 
-  royale::Vector<royale::String> use_cases;
-  json uc_vec; // list
-  if (this->cam_->getUseCases(use_cases) == OK_)
-    {
-      std::transform(use_cases.begin(), use_cases.end(),
-                     std::back_inserter(uc_vec),
-                     [](royale::String& s) -> std::string
-                     { return std::string(s.c_str()); });
-    }
+  std::vector<std::string> use_cases;
+  json uc_vec;  // list
+  if (this->cam_->getUseCases(use_cases) == OK_) {
+    std::transform(use_cases.begin(), use_cases.end(),
+                   std::back_inserter(uc_vec),
+                   [](std::string& s) -> std::string { return std::string(s.c_str()); });
+  }
 
   std::string current_use_case;
   {
@@ -773,99 +853,87 @@ royale_ros::CameraNodelet::Dump(royale_ros::Dump::Request& req,
   }
 
   std::uint32_t nstreams = 0;
-  this->cam_->getNumberOfStreams(royale::String(current_use_case.c_str()),
+  this->cam_->getNumberOfStreams(std::string(current_use_case.c_str()),
                                  nstreams);
 
-  royale::Vector<royale::StreamId> streamids;
-  json streams; // list
-  if (this->cam_->getStreams(streamids) == OK_)
-    {
-      std::transform(streamids.begin(), streamids.end(),
-                     std::back_inserter(streams),
-                     [](royale::StreamId& s) -> std::string
-                     { return std::to_string((std::uint16_t) s); });
-    }
+  std::vector<argus::StreamId> streamids;
+  json streams;  // list
+  if (this->cam_->getStreams(streamids) == OK_) {
+    std::transform(streamids.begin(), streamids.end(),
+                   std::back_inserter(streams),
+                   [](argus::StreamId& s) -> std::string { return std::to_string((std::uint16_t)s); });
+  }
 
   std::map<std::string, std::vector<std::string> > exp_limits;
   std::map<std::string, std::string> exp_modes;
   std::map<std::string, std::map<std::string, std::string> > proc_params;
-  for (auto& sid : streamids)
-    {
-      std::string sid_str = std::to_string((std::uint16_t) sid);
+  for (auto& sid : streamids) {
+    std::string sid_str = std::to_string((std::uint16_t)sid);
 
-      //
-      // exposure limits
-      //
-      royale::Pair<std::uint32_t, std::uint32_t> limits;
-      if (this->cam_->getExposureLimits(limits, sid) == OK_)
-        {
-          std::vector<std::string> l;
-          l.push_back(std::to_string(limits.first));
-          l.push_back(std::to_string(limits.second));
-          exp_limits.emplace(std::make_pair(sid_str, l));
-        }
-
-      //
-      // exposure mode
-      //
-      royale::ExposureMode emode;
-      if (this->cam_->getExposureMode(emode, sid) == OK_)
-        {
-          exp_modes.emplace(
-            std::make_pair(sid_str, std::to_string((std::uint32_t) emode)));
-        }
-
-      //
-      // If we have access >= level 2, things get more interesting
-      //
-      if (this->access_level_ >= 2)
-        {
-          royale::ProcessingParameterVector ppvec;
-          if (this->cam_->getProcessingParameters(ppvec, sid) == OK_)
-            {
-              std::map<std::string, std::string> proc_params_kv;
-              for (auto& pflag_pair : ppvec)
-                {
-                  try
-                    {
-                      std::string pname(
-                        royale::getProcessingFlagName(pflag_pair.first).data());
-
-                      std::string pvalue;
-                      switch (static_cast<int>(pflag_pair.second.variantType()))
-                        {
-                        case static_cast<int>(royale::VariantType::Int):
-                          pvalue = std::to_string(pflag_pair.second.getInt());
-                          break;
-
-                        case static_cast<int>(royale::VariantType::Float):
-                          pvalue = std::to_string(pflag_pair.second.getFloat());
-                          break;
-
-                        case static_cast<int>(royale::VariantType::Bool):
-                          pvalue =
-                            pflag_pair.second.getBool() ? "true" : "false";
-                          break;
-
-                        default:
-                          NODELET_WARN_STREAM(
-                            "Unknown variant type for pflag="
-                            << static_cast<int>(pflag_pair.first));
-                          break;
-                        }
-
-                      proc_params_kv.emplace(std::make_pair(pname, pvalue));
-                    }
-                  catch (const std::out_of_range& ex)
-                    {
-                      NODELET_WARN_STREAM("Unknown processing parameter: "
-                                          << (int) pflag_pair.first);
-                    }
-                }
-              proc_params.emplace(std::make_pair(sid_str, proc_params_kv));
-            }
-        }
+    //
+    // exposure limits
+    //
+    std::pair<std::uint32_t, std::uint32_t> limits;
+    if (this->cam_->getExposureLimits(limits, sid) == OK_) {
+      std::vector<std::string> l;
+      l.push_back(std::to_string(limits.first));
+      l.push_back(std::to_string(limits.second));
+      exp_limits.emplace(std::make_pair(sid_str, l));
     }
+
+    //
+    // exposure mode
+    //
+    argus::ExposureMode emode;
+    if (this->cam_->getExposureMode(emode, sid) == OK_) {
+      exp_modes.emplace(
+          std::make_pair(sid_str, std::to_string((std::uint32_t)emode)));
+    }
+
+    //
+    // If we have access >= level 2, things get more interesting
+    //
+    if (this->access_level_ >= 2) {
+      argus::ProcessingParameterVector ppvec;
+      if (this->cam_->getProcessingParameters(ppvec, sid) == OK_) {
+        std::map<std::string, std::string> proc_params_kv;
+        for (auto& pflag_pair : ppvec) {
+          try {
+            std::string pname(
+                argus::getProcessingFlagName(pflag_pair.first).data());
+
+            std::string pvalue;
+            switch (static_cast<int>(pflag_pair.second.variantType())) {
+              case static_cast<int>(argus::VariantType::Int):
+                pvalue = std::to_string(pflag_pair.second.getInt());
+                break;
+
+              case static_cast<int>(argus::VariantType::Float):
+                pvalue = std::to_string(pflag_pair.second.getFloat());
+                break;
+
+              case static_cast<int>(argus::VariantType::Bool):
+                pvalue =
+                    pflag_pair.second.getBool() ? "true" : "false";
+                break;
+
+              default:
+                NODELET_WARN_STREAM(
+                    "Unknown variant type for pflag="
+                    << static_cast<int>(pflag_pair.first));
+                break;
+            }
+
+            proc_params_kv.emplace(std::make_pair(pname, pvalue));
+          } catch (const std::out_of_range& ex) {
+            NODELET_WARN_STREAM("Unknown processing parameter: "
+                                << (int)pflag_pair.first);
+          }
+        }
+        proc_params.emplace(std::make_pair(sid_str, proc_params_kv));
+      }
+    }
+  }
 
   std::uint16_t max_width = 0;
   std::uint16_t max_height = 0;
@@ -881,79 +949,91 @@ royale_ros::CameraNodelet::Dump(royale_ros::Dump::Request& req,
   // Serialize to JSON
   //-------------------------------------------------------------------
 
-  json j =
-    {
+  json j = {
       {"Device", json(device_info)},
       {"Imager",
-       {
-         {"MaxSensorWidth", std::to_string(max_width)},
-         {"MaxSensorHeight", std::to_string(max_height)},
-         {"UseCases", uc_vec},
-         {"CurrentUseCase",
-          {
-            {"Name", current_use_case},
-            {"NumberOfStreams", std::to_string(nstreams)},
-            {"Streams", streams},
-            {"ExposureLimits", json(exp_limits)},
-            {"ExposureMode", json(exp_modes)},
-            {"ProcessingParameters", json(proc_params)},
-            {"FrameRate", std::to_string(fps)},
-            {"MaxFrameRate", std::to_string(max_fps)}
-          }
-         }
-       }
-      }
-    };
+       {{"MaxSensorWidth", std::to_string(max_width)},
+        {"MaxSensorHeight", std::to_string(max_height)},
+        {"UseCases", uc_vec},
+        {"CurrentUseCase",
+         {{"Name", current_use_case},
+          {"NumberOfStreams", std::to_string(nstreams)},
+          {"Streams", streams},
+          {"ExposureLimits", json(exp_limits)},
+          {"ExposureMode", json(exp_modes)},
+          {"ProcessingParameters", json(proc_params)},
+          {"FrameRate", std::to_string(fps)},
+          {"MaxFrameRate", std::to_string(max_fps)}}}}}};
 
   resp.config = j.dump(2);
   return true;
 }
 
-void
-royale_ros::CameraNodelet::SetExposureTimeCb(
-  const royale_ros::SetExposureTime::ConstPtr& msg)
-{
+void argus_ros::CameraNodelet::SetExposureTimeCb(
+    const argus_ros::SetExposureTime::ConstPtr& msg) {
   std::uint16_t stream_id = msg->streamid;
   std::uint32_t usecs = msg->exposure_usecs;
 
   std::lock_guard<std::mutex> lock(this->cam_mutex_);
-  if (this->cam_->setExposureTime(usecs, stream_id) != OK_)
-    {
-      NODELET_WARN_STREAM("Could not set exposure to: "
-                          << usecs << " for streamid="
-                          << stream_id);
-    }
+  if (this->cam_->setExposureTime(usecs, stream_id) != OK_) {
+    NODELET_WARN_STREAM("Could not set exposure to: "
+                        << usecs << " for streamid="
+                        << stream_id);
+  }
 }
 
-void
-royale_ros::CameraNodelet::SetExposureTimesCb(
-  const royale_ros::SetExposureTimes::ConstPtr& msg)
-{
+void argus_ros::CameraNodelet::SetExposureTimesCb(
+    const argus_ros::SetExposureTimes::ConstPtr& msg) {
   std::uint16_t stream_id = msg->streamid;
   std::vector<std::uint32_t> usecs = msg->exposure_usecs;
 
   std::lock_guard<std::mutex> lock(this->cam_mutex_);
   auto status =
-    this->cam_->setExposureTimes(
-      royale::Vector<std::uint32_t>(usecs), stream_id);
-  if (status != OK_)
-    {
-      NODELET_WARN_STREAM("Could not set exposure times on stream="
-                          << (int) stream_id);
-      for (auto i : usecs)
-        {
-          NODELET_WARN_STREAM("Exposure: " << i);
-        }
-
-      NODELET_WARN_STREAM((int) status << ": "
-                          << royale::getErrorString(status).c_str());
+      this->cam_->setExposureTimes(
+          std::vector<std::uint32_t>(usecs), stream_id);
+  if (status != OK_) {
+    NODELET_WARN_STREAM("Could not set exposure times on stream="
+                        << (int)stream_id);
+    for (auto i : usecs) {
+      NODELET_WARN_STREAM("Exposure: " << i);
     }
+
+    NODELET_WARN_STREAM((int)status << ": "
+                                    << argus::getErrorString(status).c_str());
+  }
 }
 
-void
-royale_ros::CameraNodelet::onNewData(const royale::DepthData *data)
-{
-  auto stamp = ros::Time((double) data->timeStamp.count()/1e6);
+void argus_ros::CameraNodelet::onNewData(const argus::IExtendedData* edata) {
+  if (!edata->hasDepthData()) {
+    NODELET_WARN_STREAM("No depth data in this frame");
+    return;
+  }
+  auto data = edata->getDepthData();
+
+  if (edata->hasRawData()) {
+    auto raw = edata->getRawData();
+
+    {
+      std::lock_guard<std::mutex> tlock(hw_mutex_);
+      cur_temp_ = raw->illuminationTemperature;
+      cur_mod_freq_.clear();
+      for (auto curMod : raw->modulationFrequencies) {
+        cur_mod_freq_.push_back(curMod);
+      }
+      cur_illumin_.clear();
+      for (auto curIllu : raw->illuminationEnabled) {
+        cur_illumin_.push_back(static_cast<unsigned int>(curIllu));
+      }
+    }
+  }
+
+  if (uvec_data_->height != data->height ||
+      uvec_data_->width != data->width) {
+    NODELET_ERROR_STREAM("Unit vector data and depth image are not of the same size!");
+    return;
+  }
+
+  auto stamp = ros::Time(static_cast<double>(data->timeStamp.count()) / 1e6);
   {
     std::lock_guard<std::mutex> lock(this->last_frame_mutex_);
     this->last_frame_ = stamp;
@@ -963,30 +1043,24 @@ royale_ros::CameraNodelet::onNewData(const royale::DepthData *data)
   // image stream out to -- we do this so the function generalizes to mixed-mode
   // use cases
   int idx = 0;
-  try
-    {
-      auto& stream_ids = this->stream_id_lut_.at(this->current_use_case_);
-      auto result = std::find(stream_ids.begin(), stream_ids.end(),
-                              (std::uint16_t) data->streamId);
-      if (result != stream_ids.end())
-        {
-          //NODELET_INFO_STREAM("Cache Hit!");
-          idx = std::distance(stream_ids.begin(), result);
-        }
-      else
-        {
-          NODELET_INFO_STREAM("StreamId cache miss: " << (int) data->streamId);
-          stream_ids.push_back(data->streamId);
-          idx = stream_ids.size() - 1;
-        }
+  try {
+    auto& stream_ids = this->stream_id_lut_.at(this->current_use_case_);
+    auto result = std::find(stream_ids.begin(), stream_ids.end(),
+                            (std::uint16_t)data->streamId);
+    if (result != stream_ids.end()) {
+      // NODELET_INFO_STREAM("Cache Hit!");
+      idx = std::distance(stream_ids.begin(), result);
+    } else {
+      NODELET_INFO_STREAM("StreamId cache miss: " << (int)data->streamId);
+      stream_ids.push_back(data->streamId);
+      idx = stream_ids.size() - 1;
     }
-  catch (const std::out_of_range& ex)
-    {
-      NODELET_ERROR_STREAM(ex.what());
-      NODELET_WARN_STREAM("No publisher for use case: "
-                          << this->current_use_case_);
-      return;
-    }
+  } catch (const std::out_of_range& ex) {
+    NODELET_ERROR_STREAM(ex.what());
+    NODELET_WARN_STREAM("No publisher for use case: "
+                        << this->current_use_case_);
+    return;
+  }
 
   //
   // 2D images are published in optical frame, 3D cloud(s) are published in
@@ -1008,52 +1082,51 @@ royale_ros::CameraNodelet::onNewData(const royale::DepthData *data)
   {
     std::lock_guard<std::mutex> lock(this->intrinsic_mutex_);
     this->intrinsic_msg_.header = head;
-    try
-      {
-        this->intrinsic_pubs_.at(idx).publish(this->intrinsic_msg_);
-      }
-    catch (const std::out_of_range& ex)
-      {
-        NODELET_ERROR_STREAM("Could not publish intrinsics: " << ex.what());
-      }
+    try {
+      this->intrinsic_pubs_.at(idx).publish(this->intrinsic_msg_);
+    } catch (const std::out_of_range& ex) {
+      NODELET_ERROR_STREAM("Could not publish intrinsics: " << ex.what());
+    }
   }
 
   //
   // Exposure times
   //
-  royale_ros::ExposureTimes exposure_msg;
+  argus_ros::ExposureTimes exposure_msg;
   exposure_msg.header = head;
   std::copy(data->exposureTimes.begin(), data->exposureTimes.end(),
             std::back_inserter(exposure_msg.usec));
-  try
-    {
-      auto& ex_pub = this->exposure_pubs_.at(idx);
-      ex_pub.publish(exposure_msg);
-    }
-  catch (const std::out_of_range& ex)
-    {
-      NODELET_ERROR_STREAM("Could not publish exposures: " << ex.what());
-    }
+  try {
+    auto& ex_pub = this->exposure_pubs_.at(idx);
+    ex_pub.publish(exposure_msg);
+  } catch (const std::out_of_range& ex) {
+    NODELET_ERROR_STREAM("Could not publish exposures: " << ex.what());
+  }
 
   //
   // Loop over the pixel data and publish the images
   //
   pcl::PointCloud<pcl::PointXYZI>::Ptr
-    cloud_(new pcl::PointCloud<pcl::PointXYZI>());
+      cloud_(new pcl::PointCloud<pcl::PointXYZI>());
 
-  cv::Mat gray_, conf_, noise_, xyz_;
+  cv::Mat gray_, conf_, noise_, xyz_, uvec_, depth_;
   gray_.create(data->height, data->width, CV_16UC1);
   conf_.create(data->height, data->width, CV_8UC1);
   noise_.create(data->height, data->width, CV_32FC1);
   xyz_.create(data->height, data->width, CV_32FC3);
+  depth_.create(data->height, data->width, CV_32FC1);
+  uvec_.create(uvec_data_->height, uvec_data_->width, CV_32FC3);
 
-  std::uint16_t* gray_ptr;
-  std::uint8_t* conf_ptr;
-  float* noise_ptr;
-  float* xyz_ptr;
+  std::uint16_t* gray_ptr = NULL;
+  std::uint8_t* conf_ptr = NULL;
+  float* noise_ptr = NULL;
+  float* xyz_ptr = NULL;
+  float* depth_ptr = NULL;
+  float* uvec_ptr = NULL;
 
   std::size_t npts = data->points.size();
   int col = 0;
+  int uv_col = 0;
   int row = -1;
   int xyz_col = 0;
 
@@ -1062,68 +1135,127 @@ royale_ros::CameraNodelet::onNewData(const royale::DepthData *data)
   cloud_->is_dense = true;
   cloud_->points.resize(npts);
 
-  for (std::size_t i = 0; i < npts; ++i)
-    {
-      pcl::PointXYZI& pt = cloud_->points[i];
+  for (std::size_t i = 0; i < npts; ++i) {
+    pcl::PointXYZI& pt = cloud_->points[i];
 
-      col = i % data->width;
-      xyz_col = col * 3;
+    col = i % data->width;
+    uv_col = (3 * i) % data->width;
+    xyz_col = col * 3;
 
-      if (col == 0)
-        {
-          row += 1;
-          gray_ptr = gray_.ptr<std::uint16_t>(row);
-          conf_ptr = conf_.ptr<std::uint8_t>(row);
-          noise_ptr = noise_.ptr<float>(row);
-          xyz_ptr = xyz_.ptr<float>(row);
-        }
+    if (col == 0) {
+      row += 1;
+      gray_ptr = gray_.ptr<std::uint16_t>(row);
+      conf_ptr = conf_.ptr<std::uint8_t>(row);
+      noise_ptr = noise_.ptr<float>(row);
+      xyz_ptr = xyz_.ptr<float>(row);
 
-      gray_ptr[col] = data->points[i].grayValue;
-      conf_ptr[col] = data->points[i].depthConfidence;
-      noise_ptr[col] = data->points[i].noise;
+      //-------------- BNR -----------/
+      depth_ptr = depth_.ptr<float>(row);
+      uvec_ptr = uvec_.ptr<float>(row);
+      //------------------------------/
+    }
 
+    gray_ptr[col] = data->points[i].grayValue;
+    conf_ptr[col] = data->points[i].depthConfidence;
+    noise_ptr[col] = data->points[i].noise;
+
+    //-------------- BNR -----------/
+    uvec_ptr[uv_col] = uvec_data_->points[i].x;
+    uv_col++;
+    uvec_ptr[uv_col] = uvec_data_->points[i].y;
+    uv_col++;
+    uvec_ptr[uv_col] = uvec_data_->points[i].z;
+
+    if (conf_ptr[col] > 0) {
       // convert to sensor frame
       pt.x = data->points[i].z;
       pt.y = -data->points[i].x;
       pt.z = -data->points[i].y;
+      depth_ptr[col] = data->points[i].z;
       pt.data_c[0] = pt.data_c[1] = pt.data_c[2] = pt.data_c[3] = 0;
       pt.intensity = data->points[i].grayValue;
-
-      xyz_ptr[xyz_col] = pt.x;
-      xyz_ptr[xyz_col + 1] = pt.y;
-      xyz_ptr[xyz_col + 2] = pt.z;
+    } else {
+      pt.x = std::numeric_limits<float>::quiet_NaN();
+      pt.y = std::numeric_limits<float>::quiet_NaN();
+      pt.z = std::numeric_limits<float>::quiet_NaN();
+      pt.intensity = std::numeric_limits<float>::quiet_NaN();
+      depth_ptr[col] = 0.0f;
     }
+
+    if (image_mask_loaded_) {
+      if (image_mask_.at<float>(col, row) > DEPTH_THRESH) {
+        depth_ptr[col] = 0.0f;
+        pt.x = std::numeric_limits<float>::quiet_NaN();
+        pt.y = std::numeric_limits<float>::quiet_NaN();
+        pt.z = std::numeric_limits<float>::quiet_NaN();
+        pt.intensity = std::numeric_limits<float>::quiet_NaN();
+      }
+    }
+    //------------------------------/
+
+    xyz_ptr[xyz_col] = pt.x;
+    xyz_ptr[xyz_col + 1] = pt.y;
+    xyz_ptr[xyz_col + 2] = pt.z;
+  }
 
   //
   // Create the image messages
   //
   sensor_msgs::ImagePtr gray_msg =
-    cv_bridge::CvImage(head, enc::TYPE_16UC1, gray_).toImageMsg();
+      cv_bridge::CvImage(head, enc::TYPE_16UC1, gray_).toImageMsg();
   sensor_msgs::ImagePtr conf_msg =
-    cv_bridge::CvImage(head, enc::TYPE_8UC1, conf_).toImageMsg();
+      cv_bridge::CvImage(head, enc::TYPE_8UC1, conf_).toImageMsg();
   sensor_msgs::ImagePtr noise_msg =
-    cv_bridge::CvImage(head, enc::TYPE_32FC1, noise_).toImageMsg();
+      cv_bridge::CvImage(head, enc::TYPE_32FC1, noise_).toImageMsg();
   cloud_->header = pcl_conversions::toPCL(cloud_head);
   sensor_msgs::ImagePtr xyz_msg =
-    cv_bridge::CvImage(cloud_head, enc::TYPE_32FC3, xyz_).toImageMsg();
+      cv_bridge::CvImage(cloud_head, enc::TYPE_32FC3, xyz_).toImageMsg();
+
+  //-------------- BNR -----------/
+  sensor_msgs::ImagePtr depth_msg =
+      cv_bridge::CvImage(cloud_head, sensor_msgs::image_encodings::TYPE_32FC1, depth_).toImageMsg();
+  sensor_msgs::ImagePtr uvec_msg =
+      cv_bridge::CvImage(head, sensor_msgs::image_encodings::TYPE_32FC3, uvec_).toImageMsg();
+  sensor_msgs::ImagePtr image_mask_msg;
+  if (image_mask_loaded_)
+    image_mask_msg = cv_bridge::CvImage(cloud_head,
+                                        sensor_msgs::image_encodings::TYPE_32FC1, image_mask_)
+                         .toImageMsg();
+  //------------------------------/
 
   //
   // Publish the data
   //
-  try
-    {
-      this->gray_pubs_.at(idx).publish(gray_msg);
-      this->conf_pubs_.at(idx).publish(conf_msg);
-      this->noise_pubs_.at(idx).publish(noise_msg);
-      this->cloud_pubs_.at(idx).publish(cloud_);
-      this->xyz_pubs_.at(idx).publish(xyz_msg);
-    }
-  catch (const std::out_of_range& ex)
-    {
-      // If this happens, it is a bug. Please report it at:
-      // https://github.com/lovepark/royale-ros/issues
-      NODELET_ERROR_STREAM("Could not publish image message: " << ex.what());
-    }
+  try {
+    this->gray_pubs_.at(idx).publish(gray_msg);
+    this->conf_pubs_.at(idx).publish(conf_msg);
+    this->noise_pubs_.at(idx).publish(noise_msg);
+    this->cloud_pubs_.at(idx).publish(cloud_);
+    this->xyz_pubs_.at(idx).publish(xyz_msg);
+
+    //-------------- BNR -----------/
+    this->depth_pubs_.at(idx).publish(depth_msg);
+    this->unit_vec_pubs_.at(idx).publish(uvec_msg);
+    if (image_mask_loaded_)
+      image_mask_pub_.publish(image_mask_msg);
+    //------------------------------/
+  } catch (const std::out_of_range& ex) {
+    // If this happens, it is a bug.
+    NODELET_ERROR_STREAM("Could not publish image message: " << ex.what());
+  }
 }
 
-PLUGINLIB_EXPORT_CLASS(royale_ros::CameraNodelet, nodelet::Nodelet)
+//-------------- BNR -----------/
+void argus_ros::CameraNodelet::onEvent(std::unique_ptr<argus::IEvent>&& event) {
+  auto event_val = event.get();
+  if (event_val->type() == argus::EventType::ARGUS_OVER_TEMPERATURE) {
+    // Do something here
+    if (event_val->severity() == argus::EventSeverity::ARGUS_ERROR)
+      NODELET_ERROR_STREAM("Unit is too hot: " << event_val->describe());
+    else
+      NODELET_WARN_STREAM("Unit getting too hot: " << event_val->describe());
+  }
+}
+//------------------------------/
+
+PLUGINLIB_EXPORT_CLASS(argus_ros::CameraNodelet, nodelet::Nodelet)

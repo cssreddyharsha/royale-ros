@@ -10,7 +10,7 @@ The first thing we need to do is discriminate between the cameras by serial
 number.
 
 ```
-$ rosrun royale_ros lscam
+$ rosrun argus_ros argus_ros_lscam
 [
   "0005-1212-0034-2109",
   "0005-4804-0050-1916"
@@ -24,7 +24,7 @@ to the name `left_camera` and the camera with serial number
 Let's bring up the left camera:
 
 ```
-$ roslaunch royale_ros camera.launch serial_number:=0005-1212-0034-2109 camera:=left_camera
+$ roslaunch argus_ros camera.launch serial_number:=0005-1212-0034-2109 camera:=left_camera
 ... logging to /home/tpanzarella/.ros/log/49cd49bc-8448-11e7-83d9-44850067bbb4/roslaunch-tuna-8180.log
 Checking log directory for disk usage. This may take awhile.
 Press Ctrl-C to interrupt
@@ -58,13 +58,13 @@ core service [/rosout] found
 process[left_camera_standalone_nodelet-1]: started with pid [8198]
 process[left_camera-2]: started with pid [8199]
 process[left_camera_tf-3]: started with pid [8200]
-[ INFO] [1503084078.559177248]: Loading nodelet /left_camera of type royale_ros/camera_nodelet to manager left_camera_standalone_nodelet with the following remappings:
+[ INFO] [1503084078.559177248]: Loading nodelet /left_camera of type argus_ros/camera_nodelet to manager left_camera_standalone_nodelet with the following remappings:
 [ INFO] [1503084078.566436535]: waitForService: Service [/left_camera_standalone_nodelet/load_nodelet] has not been advertised, waiting...
 [ INFO] [1503084078.575066082]: Initializing nodelet with 8 worker threads.
 [ INFO] [1503084078.587563108]: waitForService: Service [/left_camera_standalone_nodelet/load_nodelet] is now available.
 [ INFO] [1503084078.639667319]: onInit(): /left_camera
-[ INFO] [1503084078.648803944]: Probing for available royale cameras...
-[ INFO] [1503084081.065769836]: Instantiated royale camera: 0005-1212-0034-2109
+[ INFO] [1503084078.648803944]: Probing for available argus cameras...
+[ INFO] [1503084081.065769836]: Instantiated argus camera: 0005-1212-0034-2109
 [ INFO] [1503084081.065804228]: Access level: 1
 [ INFO] [1503084081.065950302]: Max number of streams: 2
 [ INFO] [1503084081.358929963]: Caching intrinsic calibration...
@@ -74,7 +74,7 @@ process[left_camera_tf-3]: started with pid [8200]
 Now the right:
 
 ```
-$ roslaunch royale_ros camera.launch serial_number:=0005-4804-0050-1916 camera:=right_camera
+$ roslaunch argus_ros camera.launch serial_number:=0005-4804-0050-1916 camera:=right_camera
 ... logging to /home/tpanzarella/.ros/log/49cd49bc-8448-11e7-83d9-44850067bbb4/roslaunch-tuna-8658.log
 Checking log directory for disk usage. This may take awhile.
 Press Ctrl-C to interrupt
@@ -108,13 +108,13 @@ core service [/rosout] found
 process[right_camera_standalone_nodelet-1]: started with pid [8677]
 process[right_camera-2]: started with pid [8678]
 process[right_camera_tf-3]: started with pid [8679]
-[ INFO] [1503084138.769005867]: Loading nodelet /right_camera of type royale_ros/camera_nodelet to manager right_camera_standalone_nodelet with the following remappings:
+[ INFO] [1503084138.769005867]: Loading nodelet /right_camera of type argus_ros/camera_nodelet to manager right_camera_standalone_nodelet with the following remappings:
 [ INFO] [1503084138.777704188]: waitForService: Service [/right_camera_standalone_nodelet/load_nodelet] has not been advertised, waiting...
 [ INFO] [1503084138.793439312]: Initializing nodelet with 8 worker threads.
 [ INFO] [1503084138.798616444]: waitForService: Service [/right_camera_standalone_nodelet/load_nodelet] is now available.
 [ INFO] [1503084138.852212941]: onInit(): /right_camera
-[ INFO] [1503084138.861103868]: Probing for available royale cameras...
-[ INFO] [1503084141.117220436]: Instantiated royale camera: 0005-4804-0050-1916
+[ INFO] [1503084138.861103868]: Probing for available argus cameras...
+[ INFO] [1503084141.117220436]: Instantiated argus camera: 0005-4804-0050-1916
 [ INFO] [1503084141.117258562]: Access level: 1
 [ INFO] [1503084141.117426667]: Max number of streams: 2
 [ INFO] [1503084141.402304248]: Caching intrinsic calibration...
@@ -145,4 +145,4 @@ $ rostopic list | grep -i 'cloud'
 ```
 
 This short tutorial should provide you with the basis for successfully setting
-up `royale-ros`-based multi-camera systems.
+up `argus-ros`-based multi-camera systems.

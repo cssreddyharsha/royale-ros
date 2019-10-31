@@ -1,26 +1,35 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(royale_ros)
+project(argus_ros)
 
-set(ROYALE_ROOT "/opt/royale" CACHE STRING "Root directory to Royale SDK")
+set(ARGUS_ROOT "/opt/argus" CACHE STRING "Root directory to argus SDK")
+set(argus_DIR "/opt/argus/share")
 
-find_package(royale REQUIRED
-  PATHS ${ROYALE_ROOT}/share
+add_compile_options(-Wno-conversion -Werror -Wall -Wextra -std=c++14)
+
+find_package(argus REQUIRED
+  PATHS ${argus_ROOT}/share
   )
+
 find_package(Boost REQUIRED)
 
-MESSAGE(STATUS "ROYALE_ROOT: " ${ROYALE_ROOT})
-MESSAGE(STATUS "royale_LIB_DIR: " ${royale_LIB_DIR})
-MESSAGE(STATUS "royale_LIBS: " ${royale_LIBS})
+MESSAGE(STATUS "ARGUS_ROOT: " ${argus_ROOT})
+MESSAGE(STATUS "argus_LIB_DIR: " ${argus_LIB_DIR})
+MESSAGE(STATUS "argus_LIBS: " ${argus_LIBS})
+
+find_package(Boost REQUIRED)
 
 find_package(catkin REQUIRED COMPONENTS
-  nodelet
-  roscpp
-  message_generation
-  message_runtime
+  bnr_testing_support
   cv_bridge
   image_transport
+  message_generation
+  message_runtime
+  nodelet
   pcl_ros
+  roscpp
+  roslint
   sensor_msgs
+  std_msgs
   tf2_ros
   )
 
@@ -29,14 +38,17 @@ find_package(catkin REQUIRED COMPONENTS
 #######################################
 add_service_files(
   FILES
-  Dump.srv
   Config.srv
+  Dump.srv
   Start.srv
+  StartRecord.srv
   Stop.srv
+  StopRecord.srv
   )
 
 add_message_files(
   FILES
+  CameraOpStatus.msg
   ExposureTimes.msg
   SetExposureTime.msg
   SetExposureTimes.msg
@@ -50,64 +62,63 @@ generate_messages(
 ###################################
 ## catkin specific configuration ##
 ###################################
-catkin_add_env_hooks(royale_env SHELLS sh)
+catkin_add_env_hooks(argus_env SHELLS sh)
 
 catkin_package(
   INCLUDE_DIRS include
-  LIBRARIES royale_ros
-  CATKIN_DEPENDS roscpp nodelet
+  LIBRARIES ${PROJECT_NAME}
+  CATKIN_DEPENDS message_runtime nodelet roscpp sensor_msgs std_msgs
   )
 
 #############
 ##  Build  ##
 #############
-# getting ugly warning coming out of ros/time.h, silence them for now
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-conversion -std=c++14")
-
+#catkin_lint: ignore_once external_directory
 include_directories(
   include
-  ${ROYALE_ROOT}/include
+  ${argus_ROOT}/include
   ${Boost_INCLUDE_DIRS}
   ${catkin_INCLUDE_DIRS}
   )
+
 link_directories(
-  ${royale_LIB_DIR}
+  ${argus_LIB_DIR}
   )
 
-add_library(royale_ros src/camera_nodelet.cpp)
-target_link_libraries(royale_ros
+add_library(${PROJECT_NAME} src/camera_nodelet.cpp)
+target_link_libraries(${PROJECT_NAME}
   ${catkin_LIBRARIES}
-  ${royale_LIBS}
+  ${argus_LIBS}
   )
-add_dependencies(royale_ros ${PROJECT_NAME}_generate_messages_cpp)
+add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_generate_messages_cpp)
 
-add_executable(lscam src/lscam.cpp)
-target_link_libraries(lscam
-  ${royale_LIBS}
+add_executable(${PROJECT_NAME}_lscam src/lscam.cpp)
+target_link_libraries(${PROJECT_NAME}_lscam
+    ${argus_LIBS}
   )
-add_dependencies(lscam ${PROJECT_NAME}_generate_messages_cpp)
+add_dependencies(${PROJECT_NAME}_lscam ${PROJECT_NAME}_generate_messages_cpp)
 
-add_executable(config src/config.cpp)
-target_link_libraries(config
-  ${catkin_LIBRARIES}
-  )
-add_dependencies(config ${PROJECT_NAME}_generate_messages_cpp)
-
-add_executable(dump src/dump.cpp)
-target_link_libraries(dump
+add_executable(${PROJECT_NAME}_config src/config.cpp)
+target_link_libraries(${PROJECT_NAME}_config
   ${catkin_LIBRARIES}
   )
-add_dependencies(dump ${PROJECT_NAME}_generate_messages_cpp)
+add_dependencies(${PROJECT_NAME}_config ${PROJECT_NAME}_generate_messages_cpp)
+
+add_executable(${PROJECT_NAME}_dump src/dump.cpp)
+target_link_libraries(${PROJECT_NAME}_dump
+  ${catkin_LIBRARIES}
+  )
+add_dependencies(${PROJECT_NAME}_dump ${PROJECT_NAME}_generate_messages_cpp)
 
 #############
 ## Install ##
 #############
 
 install(TARGETS
-  royale_ros
-  config
-  dump
-  lscam
+  ${PROJECT_NAME}
+  ${PROJECT_NAME}_config
+  ${PROJECT_NAME}_dump
+  ${PROJECT_NAME}_lscam
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
@@ -126,6 +137,14 @@ install(DIRECTORY launch
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
   )
 
+install(DIRECTORY doc
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+  )
+
 ######################
 ## Node-level tests ##
 ######################
+
+if(CATKIN_ENABLE_TESTING)
+  enable_bnr_tests()
+endif()

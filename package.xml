@@ -1,15 +1,16 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>royale_ros</name>
+  <name>argus_ros</name>
   <version>0.2.0</version>
-  <description>pmd Royale-based 3D ToF Camera ROS package</description>
-  <maintainer email="tom@loveparkrobotics.com">Tom Panzarella</maintainer>
+  <description>Gener8 Argus-based 3D ToF Camera ROS package</description>
+  <maintainer email="orphaned-ros-package@bossanova.com">Orphaned ROS Package</maintainer>
+  <maintainer email="sree.harsha@bossanova.com">Sree Harsha</maintainer>
   <license>Apache 2</license>
   <author email="tom@loveparkrobotics.com">Tom Panzarella</author>
 
-  <url type="repository">https://github.com/lovepark/royale-ros</url>
-
   <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>bnr_testing_support</build_depend>
+  <build_depend>roslint</build_depend>
 
   <depend>nodelet</depend>
   <depend>roscpp</depend>

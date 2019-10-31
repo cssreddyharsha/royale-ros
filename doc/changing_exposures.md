@@ -1,14 +1,14 @@
 Manually changing the exposure time on a running camera
 =======================================================
 
-This article explains the facilities provided by `royale-ros` to manually
+This article explains the facilities provided by `argus-ros` to manually
 change the exposure times on the fly for a running camera. Changing the
 exposure is set on a per stream basis.
 
 The first step is to inspect our current camera configuration.
 
 ```
-$ rosrun royale_ros dump
+$ rosrun argus_ros dump
 {
   "Device": {
     "Id": "0005-4804-0050-1916",
@@ -92,7 +92,7 @@ Lets now set the long exposure to 1000 usecs. This is done by publishing on the
 `SetExposureTime` topic:
 
 ```
-$ rostopic pub -1 /camera/SetExposureTime royale_ros/SetExposureTime "streamid: 57082
+$ rostopic pub -1 /camera/SetExposureTime argus_ros/SetExposureTime "streamid: 57082
 exposure_usecs: 1000"
 publishing and latching message for 3.0 seconds
 ```
@@ -117,7 +117,7 @@ to finer-grained control over all of the exposure times via the
 `/camera/SetExposureTimes` service:
 
 ```
-$ rostopic pub -1 /camera/SetExposureTimes royale_ros/SetExposureTimes "streamid: 0
+$ rostopic pub -1 /camera/SetExposureTimes argus_ros/SetExposureTimes "streamid: 0
 exposure_usecs: [100, 1000, 1750]"
 ```
 

@@ -14,41 +14,35 @@
  * limitations under the License.
  */
 
+#include <ros/ros.h>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <ros/ros.h>
-#include "royale_ros/Config.h"
+#include "argus_ros/Config.h"
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   std::string infile;
   std::string json;
   std::string service_name;
 
-  ros::init(argc, argv, "royale_ros_config");
+  ros::init(argc, argv, "argus_ros_config");
 
   ros::NodeHandle nh("~");
   nh.param("infile", infile, std::string("-"));
   nh.param("srv", service_name, std::string("/camera/Config"));
 
-  if (infile == "-")
-  {
+  if (infile == "-") {
     std::string line;
     std::ostringstream buff;
-    while (std::getline(std::cin, line))
-    {
+    while (std::getline(std::cin, line)) {
       buff << line << std::endl;
     }
 
     json.assign(buff.str());
-  }
-  else
-  {
+  } else {
     std::ifstream ifs(infile, std::ios::in);
-    if (! ifs)
-    {
+    if (!ifs) {
       ROS_ERROR("Failed to open file: %s", infile.c_str());
       return -1;
     }
@@ -58,18 +52,15 @@ int main(int argc, char **argv)
   }
 
   ros::ServiceClient client =
-    nh.serviceClient<royale_ros::Config>(service_name);
+      nh.serviceClient<argus_ros::Config>(service_name);
 
-  royale_ros::Config srv;
+  argus_ros::Config srv;
   srv.request.json = json;
 
-  if (client.call(srv))
-  {
+  if (client.call(srv)) {
     ROS_INFO("status=%d", srv.response.status);
     ROS_INFO("msg=%s", srv.response.msg.c_str());
-  }
-  else
-  {
+  } else {
     ROS_ERROR("Failed to call `Config' service!");
     return 1;
   }

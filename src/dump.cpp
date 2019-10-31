@@ -14,34 +14,29 @@
  * limitations under the License.
  */
 
-
+#include <ros/ros.h>
 #include <iostream>
 #include <string>
-#include <ros/ros.h>
-#include "royale_ros/Dump.h"
+#include "argus_ros/Dump.h"
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   std::string service_name;
 
-  ros::init(argc, argv, "royale_ros_dump");
+  ros::init(argc, argv, "argus_ros_dump");
 
   ros::NodeHandle nh("~");
   nh.param("srv", service_name, std::string("/camera/Dump"));
 
   ros::ServiceClient client =
-    nh.serviceClient<royale_ros::Dump>(service_name);
+      nh.serviceClient<argus_ros::Dump>(service_name);
 
-  royale_ros::Dump srv;
-  if (client.call(srv))
-    {
-      std::cout << srv.response.config << std::endl;
-    }
-  else
-    {
-      ROS_ERROR("Failed to call `Dump' service!");
-      return 1;
-    }
+  argus_ros::Dump srv;
+  if (client.call(srv)) {
+    std::cout << srv.response.config << std::endl;
+  } else {
+    ROS_ERROR("Failed to call `Dump' service!");
+    return 1;
+  }
 
   return 0;
 }

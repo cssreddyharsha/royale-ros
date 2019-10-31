@@ -1,6 +1,6 @@
-royale-ros
+argus-ros
 ==========
-royale-ros is a wrapper around the [pmd](http://www.pmdtec.com/) Royale SDK
+argus-ros is a wrapper around the [pmd](http://www.pmdtec.com/) Argus SDK
 enabling the usage of [pmd-based ToF cameras](http://pmdtec.com/picofamily/)
 from within [ROS](http://www.ros.org/) software systems.
 
@@ -11,8 +11,8 @@ Software Compatibility Matrix
 
 <table>
   <tr>
-    <th>royale-ros version</th>
-    <th>Royale SDK version</th>
+    <th>argus-ros version</th>
+    <th>Argus SDK version</th>
     <th>Linux/ROS distribution pair(s)</th>
     <th>Supported Hardware</th>
   </tr>
@@ -38,16 +38,16 @@ Software Compatibility Matrix
   </tr>
 </table>
 
-**NOTE:** Theoretically, any camera supported by Royale will be compatible with
+**NOTE:** Theoretically, any camera supported by Argus will be compatible with
   this library. However, the above listed hardware is what we have available to
-  us for testing. We welcome your feedback related to other Royale-based
+  us for testing. We welcome your feedback related to other Argus-based
   cameras and their compatibility with this ROS interface.
 
 Building and Installing the Software
 ====================================
 Building and installing the software has two primary steps:
 
-1. [Installing the pmd Royale SDK](doc/royale_install.md)
+1. [Installing the pmd Argus SDK](doc/argus_install.md)
 2. [Installing the ROS node](doc/building.md)
 
 ROS Interface
@@ -55,15 +55,15 @@ ROS Interface
 
 ## camera nodelet
 
-The core `royale-ros` sensor interface is implemented as a ROS nodelet. This
+The core `argus-ros` sensor interface is implemented as a ROS nodelet. This
 allows for lower-latency data processing vs. the traditional out-of-process
 node-based ROS interface for applications that require it. However, we ship a
-launch file with this package that allows for using the core `royale-ros`
+launch file with this package that allows for using the core `argus-ros`
 driver as a standard node. To launch the node the following command can be
 used:
 
 ```
-$ roslaunch royale_ros camera.launch
+$ roslaunch argus_ros camera.launch
 ```
 
 This launch file encapsulates several features:
@@ -77,7 +77,7 @@ This launch file encapsulates several features:
    traditional ROS sensor frame as a tf2 `static_transform_publisher`.
 
 You can either use [this launch file](launch/camera.launch) directly, or, use
-it as a basis for integrating `royale-ros` into your own robot software
+it as a basis for integrating `argus-ros` into your own robot software
 system.
 
 ### Parameters
@@ -94,9 +94,9 @@ system.
     <td>string</td>
     <td>-</td>
     <td>
-      The Royale access code used to unlock level 2+ access to the Royale SDK
+      The Argus access code used to unlock level 2+ access to the Argus SDK
       functions. If no access code is supplied (the default), Level 1 access
-      will be granted by Royale.
+      will be granted by Argus.
     </td>
   </tr>
   <tr>
@@ -109,7 +109,7 @@ system.
       scene. Continuously pulsing the illumination unit both consumes power and
       generates heat. To that end, for some applications, it is desireable to
       have the ability to turn on/off the illumination unit in
-      software. royale-ros provides that capability through a ROS service call
+      software. argus-ros provides that capability through a ROS service call
       (see below). This parameter controls whether or not the camera will start
       pulsing its illumination unit (and by extension, streaming image data) at
       node startup time.
@@ -121,7 +121,7 @@ system.
     <td>-</td>
     <td>
       Each pmd camera has a unique serial number. Each instance of the
-      royale-ros camera nodelet manages the data from a specific camera
+      argus-ros camera nodelet manages the data from a specific camera
       instance. This parameter controls which specific camera serial number
       this instance of the nodelet should manage. The special string "-" (a
       minus sign, no quotes) communicates to the nodelet that the first camera
@@ -138,7 +138,7 @@ system.
     <td>string</td>
     <td>-</td>
     <td>
-      pmd-based Royale cameras encapsulate a set of camera and imager settings
+      pmd-based Argus cameras encapsulate a set of camera and imager settings
       into the notion of a "use case". These use cases give a name to a set of
       prepackaged parameter settings. This parameter allows for setting a
       particular use case on the camera at nodelet startup time. The use case
@@ -194,9 +194,9 @@ system.
 **NOTE:** pmd cameras can produce data with different imager settings
   simulataneously. This is the so-called *mixed mode* feature. For a particular
   use case there will be one or more data *streams* that it offers. So for each
-  image topic published by `royale-ros`, we namespace it into a stream. While
-  Royale gives each camera stream a unique *stream id* encoded as a `uint16`,
-  for the purpose of topic names, `royale-ros` streams are simply positive
+  image topic published by `argus-ros`, we namespace it into a stream. While
+  Argus gives each camera stream a unique *stream id* encoded as a `uint16`,
+  for the purpose of topic names, `argus-ros` streams are simply positive
   integers. So, for example, the point cloud topic for a single stream use case
   will be published on `stream/1/cloud`. For a mixed-mode use case (lets assume
   two data streams), the point clouds will be published on `stream/1/cloud` and
@@ -244,7 +244,7 @@ system.
   </tr>
   <tr>
     <td>stream/X/exposure_times</td>
-    <td><a href="msg/ExposureTimes.msg">royale_ros/ExposureTimes</a></td>
+    <td><a href="msg/ExposureTimes.msg">argus_ros/ExposureTimes</a></td>
     <td>The exposure times used to acquire the pixel data.</td>
   </tr>
 </table>
@@ -259,7 +259,7 @@ system.
   </tr>
   <tr>
     <td>SetExposureTime</td>
-    <td><a href="msg/SetExposureTime.msg">royale_ros/SetExposureTime</a></td>
+    <td><a href="msg/SetExposureTime.msg">argus_ros/SetExposureTime</a></td>
     <td>
       Allows for a lightweight/fast means to change the exposure time for the
       current use case on-the-fly (assuming the camera is in a manual exposure
@@ -268,7 +268,7 @@ system.
   </tr>
   <tr>
     <td>SetExposureTimes</td>
-    <td><a href="msg/SetExposureTimes.msg">royale_ros/SetExposureTimes</a></td>
+    <td><a href="msg/SetExposureTimes.msg">argus_ros/SetExposureTimes</a></td>
     <td>
       Allows for a lightweight/fast means to change the exposure times for the
       current use case on-the-fly (assuming the camera is in a manual exposure
@@ -289,12 +289,12 @@ system.
   </tr>
   <tr>
     <td>Dump</td>
-    <td><a href="srv/Dump.srv">royale_ros/Dump</a></td>
+    <td><a href="srv/Dump.srv">argus_ros/Dump</a></td>
     <td>Dumps the state of the camera parameters to JSON</td>
   </tr>
   <tr>
     <td>Config</td>
-    <td><a href="srv/Config.srv">royale_ros/Config</a></td>
+    <td><a href="srv/Config.srv">argus_ros/Config</a></td>
     <td>
       Provides a means to configure the camera and imager settings,
       declaratively from a JSON encoding of the desired settings.
@@ -302,12 +302,12 @@ system.
   </tr>
   <tr>
     <td>Start</td>
-    <td><a href="srv/Start.srv">royale_ros/Start</a></td>
+    <td><a href="srv/Start.srv">argus_ros/Start</a></td>
     <td>Starts the camera data stream</td>
   </tr>
   <tr>
     <td>Stop</td>
-    <td><a href="srv/Stop.srv">royale_ros/Stop</a></td>
+    <td><a href="srv/Stop.srv">argus_ros/Stop</a></td>
     <td>
       Stops the camera data stream and, by extension, turns off the active
       illumination unit.
@@ -329,7 +329,7 @@ Please see the file called [LICENSE](LICENSE).
 
 ATTRIBUTION
 ===========
-The initial development of `royale-ros` has been sponsored by
+The initial development of `argus-ros` has been sponsored by
 [Locus Robotics](http://www.locusrobotics.com/). The authors thank them for
 their contribution to the open-source robotics community.
 

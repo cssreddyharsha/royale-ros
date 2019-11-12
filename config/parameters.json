@@ -1,0 +1,67 @@
+{
+  "Device": {
+    "Id": "0007-2310-0282-2108",
+    "Name": "GOBLIN-41-52"
+  },
+  "Imager": {
+    "CurrentUseCase": {
+      "ExposureLimits": {
+        "57082": [
+          "27",
+          "2000"
+        ]
+      },
+      "ExposureMode": {
+        "57082": "1"
+      },
+      "FrameRate": "5",
+      "MaxFrameRate": "5",
+      "Name": "MODE_9_5FPS_2000",
+      "NumberOfStreams": "1",
+      "ProcessingParameters": {
+        "57082": {
+          "AdaptiveNoiseFilterType_Int": "1",
+          "AutoExposureRefAmplitude_Float": "1200.000000",
+          "ConsistencyTolerance_Float": "1.200000",
+          "FlyingPixelsF0_Float": "0.020000",
+          "FlyingPixelsF1_Float": "0.140000",
+          "FlyingPixelsFarDist_Float": "4.500000",
+          "FlyingPixelsNearDist_Float": "1.000000",
+          "GlobalBinning_Int": "1",
+          "LowerSaturationThreshold_Int": "0",
+          "MPIAmpThreshold_Float": "0.340000",
+          "MPIDistThreshold_Float": "0.100000",
+          "MPINoiseDistance_Float": "3.000000",
+          "NoiseThreshold_Float": "0.080000",
+          "UpperSaturationThreshold_Int": "4000",
+          "UseAdaptiveBinning_Bool": "false",
+          "UseAdaptiveNoiseFilter_Bool": "true",
+          "UseAutoExposure_Bool": "true",
+          "UseFilter2Freq_Bool": "true",
+          "UseMPIFlagAverage_Bool": "true",
+          "UseMPIFlag_Amp_Bool": "true",
+          "UseMPIFlag_Dist_Bool": "true",
+          "UseRemoveFlyingPixel_Bool": "true",
+          "UseSparsePointCloud_Bool": "false",
+          "UseValidateImage_Bool": "true"
+        }
+      },
+      "Streams": [
+        "57082"
+      ]
+    },
+    "MaxSensorHeight": "287",
+    "MaxSensorWidth": "352",
+    "UseCases": [
+      "MODE_9_5FPS_2000",
+      "MODE_9_10FPS_1000",
+      "MODE_9_15FPS_600",
+      "MODE_9_25FPS_300",
+      "MODE_5_35FPS_600",
+      "MODE_5_45FPS_400",
+      "MODE_5_60FPS_300",
+      "MODE_MIXED_30_5",
+      "MODE_MIXED_50_5"
+    ]
+  }
+}

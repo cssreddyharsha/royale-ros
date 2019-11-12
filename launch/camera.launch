@@ -92,6 +92,8 @@
       # file is not present then no image mask will be considered and
       # all the depth points will be published.
       image_mask: "$(find argus_ros)/config/$(arg camera)_link_depth_occlusion.txt"
+
+      initial_configuration: "$(find argus_ros)/config/parameters.json"
     </rosparam>
   </node>
 

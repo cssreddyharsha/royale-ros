@@ -500,8 +500,10 @@ void argus_ros::CameraNodelet::StartCameraStream() {
       cfs >> j;
       std::string set_config;
       int set_ret = SetConfigurationParams(j, set_config);
-      if (!set_ret)
+      if (set_ret)
         NODELET_ERROR_STREAM("Couldn't set the required parameters: " << j);
+      else
+        NODELET_INFO_STREAM("Parameters set successfully!");
     } else {
       NODELET_ERROR_STREAM("Unable to open configuration file!");
     }
@@ -586,7 +588,6 @@ int argus_ros::CameraNodelet::SetConfigurationParams(json& j,
             status = this->cam_->setExposureMode(ex, sid);
           }
         } else if (key == "ProcessingParameters") {
-          if (this->access_level_ >= 2) {
             json pp_dict = uc_root[key];
             for (json::iterator sid_it = pp_dict.begin();
                  sid_it != pp_dict.end(); ++sid_it) {
@@ -681,10 +682,6 @@ int argus_ros::CameraNodelet::SetConfigurationParams(json& j,
                     (int)status << ": " << argus::getErrorString(status).c_str());
               }
             }
-          } else {
-            NODELET_WARN_STREAM(
-                "'ProcessingParameters' requires L2 access!");
-          }
         } else {
           // read-only parameter
           continue;
@@ -893,7 +890,6 @@ bool argus_ros::CameraNodelet::Dump(argus_ros::Dump::Request& req,
     //
     // If we have access >= level 2, things get more interesting
     //
-    if (this->access_level_ >= 2) {
       argus::ProcessingParameterVector ppvec;
       if (this->cam_->getProcessingParameters(ppvec, sid) == OK_) {
         std::map<std::string, std::string> proc_params_kv;
@@ -932,7 +928,6 @@ bool argus_ros::CameraNodelet::Dump(argus_ros::Dump::Request& req,
         }
         proc_params.emplace(std::make_pair(sid_str, proc_params_kv));
       }
-    }
   }
 
   std::uint16_t max_width = 0;
